@@ -4,13 +4,113 @@ A high-performance, event-driven document ingestion pipeline designed for the UK
 
 ## Architecture Overview
 
-This system follows the **Strategy Pattern** and **Factory Pattern** for maximum extensibility:
+This system follows the **Strategy Pattern** and **Factory Pattern** for maximum extensibility.
 
 ```
-User Upload (Streamlit) → API (FastAPI) → Redis Queue (Celery) → Worker Process
-                                                    ↓
-                            1. Parser Selection → 2. Parsing → 3. Chunking → 4. Embedding → 5. Vector Upsert
+┌─────────────────────────────────────────────────────────────────────────┐
+│                          Frontend (Streamlit)                            │
+│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐                   │
+│  │ File Upload  │  │ Status View  │  │ Settings     │                   │
+│  └──────┬───────┘  └──────┬───────┘  └──────────────┘                   │
+│         │                  │                                               │
+│         ▼                  ▼                                               │
+│         APIClient (X-Org-ID header for multi-tenancy)                     │
+└──────────────────────────────┬────────────────────────────────────────────┘
+                               │
+                               ▼
+┌─────────────────────────────────────────────────────────────────────────┐
+│                         FastAPI Backend                                  │
+│  ┌──────────────────────────────────────────────────────────────────┐   │
+│  │                          API Routers                              │   │
+│  │  ┌──────────────┐  ┌──────────────────┐  ┌──────────────────┐    │   │
+│  │  │   ingest.py  │  │ organizations.py │  │    users.py      │    │   │
+│  │  │  /ingest/*   │  │  /organizations  │  │    /users        │    │   │
+│  │  └──────┬───────┘  └──────────────────┘  └──────────────────┘    │   │
+│  │         │                                                           │   │
+│  │         ▼                                                           │   │
+│  │  ┌─────────────────────────────────────────────────────────────┐  │   │
+│  │  │              Upload Document Flow (Fire-and-Forget)         │  │   │
+│  │  │  1. Validate file & organization                            │  │   │
+│  │  │  2. Save to uploads/                                         │  │   │
+│  │  │  3. Create Document record in PostgreSQL                     │  │   │
+│  │  │  4. Queue task to Redis (Celery) → Return 202 Accepted       │  │   │
+│  │  └─────────────────────────────────────────────────────────────┘  │   │
+│  └──────────────────────────────────────────────────────────────────┘   │
+└──────────────────────────────┬────────────────────────────────────────────┘
+                               │
+                               ▼
+┌─────────────────────────────────────────────────────────────────────────┐
+│                        Message Queue (Redis)                             │
+│                    Celery Task Queue (Background Jobs)                   │
+└──────────────────────────────┬────────────────────────────────────────────┘
+                               │
+                               ▼
+┌─────────────────────────────────────────────────────────────────────────┐
+│                       Celery Worker (Async Processing)                   │
+│  ┌──────────────────────────────────────────────────────────────────┐   │
+│  │                    Document Processing Pipeline                   │   │
+│  │                                                                   │   │
+│  │  1. ┌─────────────┐   2. ┌─────────────┐   3. ┌─────────────┐   │   │
+│  │     │   Parser    │  →   │  Chunker    │  →   │  Embedder   │   │   │
+│  │     │ (LlamaParse)│      │ (Markdown)  │      │  (OpenAI)   │   │   │
+│  │     └─────────────┘      └─────────────┘      └─────────────┘   │   │
+│  │           │                      │                     │         │   │
+│  │           ▼                      ▼                     ▼         │   │
+│  │  ┌─────────────────────────────────────────────────────────────┐  │   │
+│  │  │                    4. Vector Store                          │  │   │
+│  │  │                     (Qdrant)                               │  │   │
+│  │  │            - Upsert vectors with org_id                     │  │   │
+│  │  │            - Update document status to COMPLETED            │  │   │
+│  │  └─────────────────────────────────────────────────────────────┘  │   │
+│  └──────────────────────────────────────────────────────────────────┘   │
+└─────────────────────────────────────────────────────────────────────────┘
+                               │
+                               ▼
+┌─────────────────────────────────────────────────────────────────────────┐
+│                          Data Storage Layer                              │
+│  ┌──────────────────────┐  ┌──────────────────────────────────────┐    │
+│  │    PostgreSQL        │  │           Qdrant                      │    │
+│  │  (Metadata & State)  │  │    (Vector Embeddings)                │    │
+│  │                      │  │                                      │    │
+│  │  - organizations     │  │  - Collections by org_id             │    │
+│  │  - users             │  │  - Vectors with tenant isolation     │    │
+│  │  - documents         │  │                                      │    │
+│  │  - document_chunks   │  │                                      │    │
+│  └──────────────────────┘  └──────────────────────────────────────┘    │
+└─────────────────────────────────────────────────────────────────────────┘
 ```
+
+### Key Architectural Patterns
+
+**Strategy Pattern** (Plugin System)
+```
+app/interfaces/          # Abstract Base Classes
+├── parser.py           → BaseParser
+├── chunker.py          → BaseChunker
+├── embedder.py         → BaseEmbedder
+└── vector_store.py     → BaseVectorStore
+
+app/strategies/         # Concrete Implementations
+├── parsers/            → LlamaParseParser, SimpleParser
+├── chunkers/           → MarkdownChunker, RecursiveChunker
+└── vector_stores/      → QdrantVectorStore
+```
+
+**Factory Pattern** (Runtime Configuration)
+```python
+parser = ComponentFactory.get_parser("llama_parse")
+chunker = ComponentFactory.get_chunker("markdown")
+embedder = ComponentFactory.get_embedder("openai")
+```
+
+### Core Components
+
+- **FastAPI**: Asynchronous REST API with fire-and-forget upload
+- **PostgreSQL**: Metadata and state management (Async SQLAlchemy)
+- **Qdrant**: Vector database for semantic search
+- **Redis**: Message broker for Celery
+- **Celery**: Async background task processing
+- **LlamaParse**: High-quality document extraction
 
 ### Core Components
 
