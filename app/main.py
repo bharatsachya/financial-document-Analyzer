@@ -13,6 +13,7 @@ from fastapi.responses import JSONResponse
 
 from app.api.ingest import router as ingest_router
 from app.api.organizations import router as organizations_router
+from app.api.templates import router as templates_router
 from app.api.users import router as users_router
 from app.api.schemas import ErrorResponse
 from app.core.config import Settings, get_settings
@@ -100,6 +101,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
             app.include_router(users_router)
             logger.info("Registered users router")
+
+            app.include_router(templates_router)
+            logger.info("Registered templates router")
         except Exception as e:
             logger.error(f"Failed to include router: {e}", exc_info=True)
             raise

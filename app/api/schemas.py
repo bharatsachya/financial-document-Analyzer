@@ -149,3 +149,37 @@ class ErrorResponse(BaseModel):
     detail: str = Field(description="Error message")
     error_code: str | None = Field(default=None, description="Application-specific error code")
     extra: dict[str, Any] | None = Field(default=None, description="Additional error context")
+
+
+# =============================================================================
+# Template Schemas
+# =============================================================================
+
+
+class DetectedVariable(BaseModel):
+    """A variable detected in the template."""
+
+    original_text: str = Field(description="The exact text found in the document")
+    suggested_variable_name: str = Field(description="Suggested snake_case variable name")
+    rationale: str = Field(description="Why this was identified as dynamic")
+    paragraph_index: int = Field(description="Paragraph position for safe replacement")
+
+
+class TemplateAnalysisResponse(BaseModel):
+    """Response from template analysis."""
+
+    template_id: uuid.UUID
+    filename: str
+    detected_variables: list[DetectedVariable]
+    total_paragraphs: int
+    analyzed_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class TemplateRenderRequest(BaseModel):
+    """Request to render a template with context data."""
+
+    template_id: uuid.UUID
+    context_data: dict[str, Any]
+    output_filename: str | None = None

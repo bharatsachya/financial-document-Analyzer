@@ -95,6 +95,12 @@ class Settings(BaseSettings):
         description="Vector store strategy to use: 'qdrant'.",
     )
 
+    # Template Engine
+    use_llm_for_templates: bool = Field(
+        default=False,
+        description="Use LLM for template analysis (else use regex patterns).",
+    )
+
     # File Storage
     upload_dir: Path = Field(
         default=Path("./uploads"),

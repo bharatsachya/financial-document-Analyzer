@@ -11,10 +11,12 @@ from app.core.config import Settings, get_settings
 from app.interfaces.chunker import BaseChunker
 from app.interfaces.embedder import BaseEmbedder
 from app.interfaces.parser import BaseParser
+from app.interfaces.template import BaseTemplateAnalyzer, BaseTemplateInjector
 from app.interfaces.vector_store import BaseVectorStore
 from app.strategies.chunkers import MarkdownHeaderChunker, RecursiveTokenChunker
 from app.strategies.embedders import OpenAIEmbedder
 from app.strategies.parsers import LlamaParseParser, SimpleTextParser
+from app.strategies.template_engine import TemplateAnalyzer, TemplateInjector
 from app.strategies.vector_stores import QdrantStore
 
 logger = logging.getLogger(__name__)
@@ -49,6 +51,8 @@ class ComponentFactory:
         self._chunker_cache: BaseChunker | None = None
         self._embedder_cache: BaseEmbedder | None = None
         self._vector_store_cache: BaseVectorStore | None = None
+        self._template_analyzer_cache: BaseTemplateAnalyzer | None = None
+        self._template_injector_cache: BaseTemplateInjector | None = None
 
     def get_parser(self, parser_type: str | None = None) -> BaseParser:
         """Get a parser instance based on the specified type.
@@ -198,6 +202,38 @@ class ComponentFactory:
 
         return self._vector_store_cache
 
+    def get_template_analyzer(self) -> BaseTemplateAnalyzer:
+        """Get a template analyzer instance.
+
+        Returns:
+            A BaseTemplateAnalyzer implementation instance.
+
+        Raises:
+            ValueError: If template analyzer configuration is invalid.
+        """
+        if self._template_analyzer_cache is None:
+            logger.info("Instantiating template analyzer")
+
+            self._template_analyzer_cache = TemplateAnalyzer(
+                use_llm=self._settings.use_llm_for_templates,
+                openai_api_key=self._settings.openai_api_key,
+            )
+
+        return self._template_analyzer_cache
+
+    def get_template_injector(self) -> BaseTemplateInjector:
+        """Get a template injector instance.
+
+        Returns:
+            A BaseTemplateInjector implementation instance.
+        """
+        if self._template_injector_cache is None:
+            logger.info("Instantiating template injector")
+
+            self._template_injector_cache = TemplateInjector()
+
+        return self._template_injector_cache
+
     def clear_cache(self) -> None:
         """Clear all cached component instances.
 
@@ -208,6 +244,8 @@ class ComponentFactory:
         self._chunker_cache = None
         self._embedder_cache = None
         self._vector_store_cache = None
+        self._template_analyzer_cache = None
+        self._template_injector_cache = None
         logger.debug("Component factory cache cleared")
 
 

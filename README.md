@@ -1,6 +1,6 @@
 # Document Intelligence Platform
 
-A high-performance, event-driven document ingestion pipeline designed for the UK Financial Advisory market. It processes unstructured financial documents (PDFs, Docx) into structured, queryable knowledge chunks in Qdrant.
+A high-performance, event-driven document ingestion and template generation pipeline designed for the UK Financial Advisory market. It processes unstructured financial documents (PDFs, Docx) into structured, queryable knowledge chunks in Qdrant, and provides intelligent template analysis with Jinja2 variable injection.
 
 ## Architecture Overview
 
@@ -88,12 +88,15 @@ app/interfaces/          # Abstract Base Classes
 ├── parser.py           → BaseParser
 ├── chunker.py          → BaseChunker
 ├── embedder.py         → BaseEmbedder
-└── vector_store.py     → BaseVectorStore
+├── vector_store.py     → BaseVectorStore
+└── template.py         → BaseTemplateAnalyzer, BaseTemplateInjector
 
 app/strategies/         # Concrete Implementations
 ├── parsers/            → LlamaParseParser, SimpleParser
 ├── chunkers/           → MarkdownChunker, RecursiveChunker
-└── vector_stores/      → QdrantVectorStore
+├── embedders/          → OpenAIEmbedder
+├── vector_stores/      → QdrantVectorStore
+└── template_engine/    → TemplateAnalyzer, TemplateInjector
 ```
 
 **Factory Pattern** (Runtime Configuration)
@@ -102,15 +105,6 @@ parser = ComponentFactory.get_parser("llama_parse")
 chunker = ComponentFactory.get_chunker("markdown")
 embedder = ComponentFactory.get_embedder("openai")
 ```
-
-### Core Components
-
-- **FastAPI**: Asynchronous REST API with fire-and-forget upload
-- **PostgreSQL**: Metadata and state management (Async SQLAlchemy)
-- **Qdrant**: Vector database for semantic search
-- **Redis**: Message broker for Celery
-- **Celery**: Async background task processing
-- **LlamaParse**: High-quality document extraction
 
 ### Core Components
 
@@ -141,6 +135,9 @@ cp .env.example .env
 Required environment variables:
 - `OPENAI_API_KEY`: For embeddings
 - `LLAMA_PARSE_API_KEY`: For document parsing (or use simple parser)
+
+Optional:
+- `USE_LLM_FOR_TEMPLATES`: Enable LLM-based template analysis (default: false, uses regex patterns)
 
 ### 3. Install Dependencies
 
@@ -182,6 +179,7 @@ streamlit run frontend/app.py
 │   ├── api/              # FastAPI routers and dependencies
 │   │   ├── deps.py       # Dependency injection
 │   │   ├── ingest.py     # Document upload/status endpoints
+│   │   ├── templates.py  # Template analysis endpoints
 │   │   └── schemas.py    # Pydantic models
 │   ├── core/             # Configuration and factory
 │   │   ├── config.py     # Settings with Pydantic
@@ -193,12 +191,14 @@ streamlit run frontend/app.py
 │   │   ├── parser.py     # BaseParser
 │   │   ├── chunker.py    # BaseChunker
 │   │   ├── embedder.py   # BaseEmbedder
-│   │   └── vector_store.py  # BaseVectorStore
+│   │   ├── vector_store.py  # BaseVectorStore
+│   │   └── template.py   # BaseTemplateAnalyzer, BaseTemplateInjector
 │   ├── strategies/       # Concrete implementations
 │   │   ├── parsers/      # LlamaParse, Simple
 │   │   ├── chunkers/     # Markdown, Recursive
 │   │   ├── embedders/    # OpenAI
-│   │   └── vector_stores/  # Qdrant
+│   │   ├── vector_stores/  # Qdrant
+│   │   └── template_engine/  # TemplateAnalyzer, TemplateInjector
 │   ├── main.py           # FastAPI app entry point
 │   └── worker.py         # Celery worker entry point
 ├── frontend/
@@ -238,6 +238,66 @@ Headers: X-Org-ID: <your-org-id>
   "page": 1,
   "page_size": 20
 }
+```
+
+### Template Intelligence Engine (TIE)
+
+The TIE system analyzes Word templates to detect dynamic variables and inject Jinja2 tags.
+
+#### Analyze Template
+
+```bash
+POST /templates/analyze
+Headers: X-Org-ID: <your-org-id>
+Content-Type: multipart/form-data
+
+# Upload .docx template
+# Returns detected variables for review
+{
+  "template_id": "uuid",
+  "filename": "template.docx",
+  "detected_variables": [
+    {
+      "original_text": "Mr. John Smith",
+      "suggested_variable_name": "client_full_name",
+      "rationale": "Detected pattern matching client_full_name",
+      "paragraph_index": 5
+    }
+  ],
+  "total_paragraphs": 20,
+  "analyzed_at": "2026-02-02T12:00:00Z"
+}
+```
+
+#### Finalize Template
+
+```bash
+POST /templates/finalize
+Headers: X-Org-ID: <your-org-id>
+Content-Type: application/json
+
+{
+  "template_id": "uuid",
+  "variables": [...],  # Reviewed variables from analyze response
+  "original_filename": "template.docx"
+}
+
+# Returns download URL for tagged template
+{
+  "template_id": "uuid",
+  "status": "finalized",
+  "download_url": "/templates/download/{template_id}",
+  "variable_count": 5
+}
+```
+
+#### Download Template
+
+```bash
+GET /templates/download/{template_id}
+Headers: X-Org-ID: <your-org-id>
+
+# Downloads the tagged .docx with Jinja2 variables
 ```
 
 ## Adding New Strategies
@@ -307,6 +367,71 @@ QUEUED → PARSING → CHUNKING → EMBEDDING → INDEXING → COMPLETED
 ```
 
 Each state transition is persisted to PostgreSQL for tracking.
+
+## Template Intelligence Engine (TIE)
+
+The TIE system provides intelligent Word template analysis and Jinja2 variable injection for document generation workflows.
+
+### Features
+
+- **Automatic Variable Detection**: Identifies dynamic content (names, dates, amounts) using regex patterns or LLM analysis
+- **Paragraph Index Tracking**: Preserves precise locations for handling duplicate text occurrences
+- **Style Preservation**: Uses python-docx runs to maintain original formatting
+- **Human Review Workflow**: Analyze → Review → Finalize → Download
+
+### Supported Patterns (Regex-based)
+
+| Pattern | Variable Name |
+|---------|---------------|
+| `Mr/Mrs/Ms/Dr First Last` | `client_full_name` |
+| `DD/MM/YYYY` | `date` |
+| `£1,234.56` | `monetary_amount` |
+| `50%` | `percentage` |
+| `123 Street Road` | `address_line` |
+
+### TIE Workflow
+
+```
+┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
+│  Upload .docx   │───▶│  Analyze &      │───▶│  Review & Edit  │
+│                 │    │  Detect Vars    │    │  Variables      │
+└─────────────────┘    └─────────────────┘    └────────┬────────┘
+                                                       │
+                                                       ▼
+┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
+│  Download       │◀───│  Finalize &     │◀───│  Approve List   │
+│  Tagged .docx   │    │  Inject Tags    │    │                 │
+└─────────────────┘    └─────────────────┘    └─────────────────┘
+```
+
+### Usage Example
+
+```python
+from app.strategies.template_engine import TemplateAnalyzer, TemplateInjector
+
+# Analyze a template
+analyzer = TemplateAnalyzer(use_llm=False)
+variables = await analyzer.analyze("template.docx")
+
+# Variables are detected with paragraph indices for precise replacement
+# [
+#   DetectedVariable(
+#     original_text="Mr. John Smith",
+#     suggested_variable_name="client_full_name",
+#     rationale="Detected pattern matching client_full_name",
+#     paragraph_index=5
+#   ),
+#   ...
+# ]
+
+# Inject Jinja2 tags
+injector = TemplateInjector()
+tagged_path = await injector.inject_tags(
+    file_path="template.docx",
+    variables=variables,
+    output_path="template_tagged.docx"
+)
+```
 
 ## Tenant Isolation
 
