@@ -1,0 +1,351 @@
+[
+  {
+    "original_text": "Sarah",
+    "suggested_tag": "client_first_name",
+    "type": "text",
+    "location_type": "paragraph",
+    "index": 5
+  },
+  {
+    "original_text": "\u00a3500,000",
+    "suggested_tag": "business_revenue_target_amount",
+    "type": "money",
+    "location_type": "paragraph",
+    "index": 28
+  },
+  {
+    "original_text": "\u00a3500,000",
+    "suggested_tag": "business_revenue_target",
+    "type": "money",
+    "location_type": "paragraph",
+    "index": 29
+  },
+  {
+    "original_text": "3 years",
+    "suggested_tag": "business_revenue_target_timeline",
+    "type": "duration",
+    "location_type": "paragraph",
+    "index": 29
+  },
+  {
+    "original_text": "3 years",
+    "suggested_tag": "duration_years",
+    "type": "duration",
+    "location_type": "paragraph",
+    "index": 31
+  },
+  {
+    "original_text": "8%",
+    "suggested_tag": "investment_target_annual_return",
+    "type": "percentage",
+    "location_type": "paragraph",
+    "index": 32
+  },
+  {
+    "original_text": "8%",
+    "suggested_tag": "investment_target_annual_return",
+    "type": "percentage",
+    "location_type": "paragraph",
+    "index": 34
+  },
+  {
+    "original_text": "\u00a360,000",
+    "suggested_tag": "retirement_annual_income_target",
+    "type": "money",
+    "location_type": "paragraph",
+    "index": 36
+  },
+  {
+    "original_text": "55",
+    "suggested_tag": "retirement_age_target",
+    "type": "number",
+    "location_type": "paragraph",
+    "index": 36
+  },
+  {
+    "original_text": "\u00a360,000",
+    "suggested_tag": "financial_goal_amount",
+    "type": "money",
+    "location_type": "paragraph",
+    "index": 40
+  },
+  {
+    "original_text": "55",
+    "suggested_tag": "financial_goal_age",
+    "type": "number",
+    "location_type": "paragraph",
+    "index": 40
+  },
+  {
+    "original_text": "Business Capital",
+    "suggested_tag": "asset_type",
+    "type": "text",
+    "location_type": "table",
+    "table_index": 0,
+    "row_index": 1
+  },
+  {
+    "original_text": "Sarah",
+    "suggested_tag": "client_first_name",
+    "type": "text",
+    "location_type": "table",
+    "table_index": 0,
+    "row_index": 1
+  },
+  {
+    "original_text": "\u00a3750,000",
+    "suggested_tag": "asset_business_value",
+    "type": "money",
+    "location_type": "table",
+    "table_index": 0,
+    "row_index": 1
+  },
+  {
+    "original_text": "\u00a33,000/month",
+    "suggested_tag": "asset_business_monthly_income",
+    "type": "money_per_period",
+    "location_type": "table",
+    "table_index": 0,
+    "row_index": 1
+  },
+  {
+    "original_text": "\u00a30",
+    "suggested_tag": "asset_business_debt",
+    "type": "money",
+    "location_type": "table",
+    "table_index": 0,
+    "row_index": 1
+  },
+  {
+    "original_text": "15%",
+    "suggested_tag": "asset_business_growth_rate",
+    "type": "percentage",
+    "location_type": "table",
+    "table_index": 0,
+    "row_index": 1
+  },
+  {
+    "original_text": "Stock Portfolio",
+    "suggested_tag": "asset_type",
+    "type": "text",
+    "location_type": "table",
+    "table_index": 0,
+    "row_index": 2
+  },
+  {
+    "original_text": "Sarah",
+    "suggested_tag": "client_first_name",
+    "type": "text",
+    "location_type": "table",
+    "table_index": 0,
+    "row_index": 2
+  },
+  {
+    "original_text": "\u00a3300,000",
+    "suggested_tag": "asset_value",
+    "type": "money",
+    "location_type": "table",
+    "table_index": 0,
+    "row_index": 2
+  },
+  {
+    "original_text": "\u00a3500/month",
+    "suggested_tag": "asset_monthly_contribution",
+    "type": "money",
+    "location_type": "table",
+    "table_index": 0,
+    "row_index": 2
+  },
+  {
+    "original_text": "\u00a30",
+    "suggested_tag": "asset_withdrawal",
+    "type": "money",
+    "location_type": "table",
+    "table_index": 0,
+    "row_index": 2
+  },
+  {
+    "original_text": "7%",
+    "suggested_tag": "asset_growth_rate",
+    "type": "percentage",
+    "location_type": "table",
+    "table_index": 0,
+    "row_index": 2
+  },
+  {
+    "original_text": "Real Estate Fund",
+    "suggested_tag": "investment_type",
+    "type": "text",
+    "location_type": "table",
+    "table_index": 0,
+    "row_index": 3
+  },
+  {
+    "original_text": "Sarah",
+    "suggested_tag": "client_name",
+    "type": "text",
+    "location_type": "table",
+    "table_index": 0,
+    "row_index": 3
+  },
+  {
+    "original_text": "\u00a3200,000",
+    "suggested_tag": "investment_amount",
+    "type": "money",
+    "location_type": "table",
+    "table_index": 0,
+    "row_index": 3
+  },
+  {
+    "original_text": "\u00a30",
+    "suggested_tag": "current_value",
+    "type": "money",
+    "location_type": "table",
+    "table_index": 0,
+    "row_index": 3
+  },
+  {
+    "original_text": "6%",
+    "suggested_tag": "expected_return_rate",
+    "type": "percentage",
+    "location_type": "table",
+    "table_index": 0,
+    "row_index": 3
+  },
+  {
+    "original_text": "Pension",
+    "suggested_tag": "asset_type",
+    "type": "text",
+    "location_type": "table",
+    "table_index": 0,
+    "row_index": 4
+  },
+  {
+    "original_text": "Sarah",
+    "suggested_tag": "client_first_name",
+    "type": "text",
+    "location_type": "table",
+    "table_index": 0,
+    "row_index": 4
+  },
+  {
+    "original_text": "\u00a3150,000",
+    "suggested_tag": "asset_value",
+    "type": "money",
+    "location_type": "table",
+    "table_index": 0,
+    "row_index": 4
+  },
+  {
+    "original_text": "\u00a31,000/month",
+    "suggested_tag": "asset_monthly_contribution",
+    "type": "money_per_period",
+    "location_type": "table",
+    "table_index": 0,
+    "row_index": 4
+  },
+  {
+    "original_text": "\u00a30",
+    "suggested_tag": "asset_income",
+    "type": "money",
+    "location_type": "table",
+    "table_index": 0,
+    "row_index": 4
+  },
+  {
+    "original_text": "5%",
+    "suggested_tag": "asset_growth_rate",
+    "type": "percentage",
+    "location_type": "table",
+    "table_index": 0,
+    "row_index": 4
+  },
+  {
+    "original_text": "Emergency Fund",
+    "suggested_tag": "emergency_fund_name",
+    "type": "text",
+    "location_type": "table",
+    "table_index": 0,
+    "row_index": 5
+  },
+  {
+    "original_text": "Sarah",
+    "suggested_tag": "client_first_name",
+    "type": "text",
+    "location_type": "table",
+    "table_index": 0,
+    "row_index": 5
+  },
+  {
+    "original_text": "\u00a350,000",
+    "suggested_tag": "emergency_fund_value",
+    "type": "money",
+    "location_type": "table",
+    "table_index": 0,
+    "row_index": 5
+  },
+  {
+    "original_text": "\u00a3500/month",
+    "suggested_tag": "emergency_fund_monthly_contribution",
+    "type": "money_per_period",
+    "location_type": "table",
+    "table_index": 0,
+    "row_index": 5
+  },
+  {
+    "original_text": "\u00a30",
+    "suggested_tag": "emergency_fund_current_balance",
+    "type": "money",
+    "location_type": "table",
+    "table_index": 0,
+    "row_index": 5
+  },
+  {
+    "original_text": "1%",
+    "suggested_tag": "emergency_fund_interest_rate",
+    "type": "percentage",
+    "location_type": "table",
+    "table_index": 0,
+    "row_index": 5
+  },
+  {
+    "original_text": "Crypto Assets",
+    "suggested_tag": "asset_type",
+    "type": "text",
+    "location_type": "table",
+    "table_index": 0,
+    "row_index": 6
+  },
+  {
+    "original_text": "Sarah",
+    "suggested_tag": "client_first_name",
+    "type": "text",
+    "location_type": "table",
+    "table_index": 0,
+    "row_index": 6
+  },
+  {
+    "original_text": "\u00a320,000",
+    "suggested_tag": "asset_value",
+    "type": "money",
+    "location_type": "table",
+    "table_index": 0,
+    "row_index": 6
+  },
+  {
+    "original_text": "\u00a30",
+    "suggested_tag": "asset_current_value",
+    "type": "money",
+    "location_type": "table",
+    "table_index": 0,
+    "row_index": 6
+  },
+  {
+    "original_text": "20%",
+    "suggested_tag": "asset_growth_rate",
+    "type": "percentage",
+    "location_type": "table",
+    "table_index": 0,
+    "row_index": 6
+  }
+]

@@ -152,13 +152,13 @@ class ComponentFactory:
 
             match embedder_type:
                 case "openai":
-                    if not self._settings.openai_api_key:
-                        raise ValueError("OPENAI_API_KEY is required for OpenAI embedder")
+                    if not self._settings.openrouter_api_key:
+                        raise ValueError("OPENROUTER_API_KEY is required for embeddings")
                     self._embedder_cache = OpenAIEmbedder(
-                        api_key=self._settings.openai_api_key,
-                        model="text-embedding-3-small",
+                        api_key=self._settings.openrouter_api_key,
+                        model=self._settings.llm_embedding_model,
                         base_url=self._settings.openai_base_url,
-                        organization=self._settings.openai_organization,
+                        organization=None,
                     )
                 case _:
                     raise ValueError(
@@ -216,7 +216,9 @@ class ComponentFactory:
 
             self._template_analyzer_cache = TemplateAnalyzer(
                 use_llm=self._settings.use_llm_for_templates,
-                openai_api_key=self._settings.openai_api_key,
+                openai_api_key=self._settings.openrouter_api_key,
+                base_url=self._settings.openai_base_url,
+                model=self._settings.llm_chat_model,
             )
 
         return self._template_analyzer_cache

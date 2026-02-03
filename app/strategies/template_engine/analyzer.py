@@ -10,8 +10,8 @@ import re
 from pathlib import Path
 from typing import Any
 
-from app.api.schemas import DetectedVariable
 from app.interfaces.template import BaseTemplateAnalyzer
+from app.strategies.template_engine.models import DetectedVariable
 
 logger = logging.getLogger(__name__)
 
@@ -46,15 +46,25 @@ class TemplateAnalyzer(BaseTemplateAnalyzer):
     Can be extended with LLM-based analysis for more sophisticated detection.
     """
 
-    def __init__(self, use_llm: bool = False, openai_api_key: str | None = None) -> None:
+    def __init__(
+        self,
+        use_llm: bool = False,
+        openai_api_key: str | None = None,
+        base_url: str = "https://openrouter.ai/api/v1",
+        model: str = "openai/gpt-4o",
+    ) -> None:
         """Initialize the analyzer.
 
         Args:
             use_llm: Whether to use LLM for analysis (else mock/regex).
-            openai_api_key: OpenAI API key if use_llm=True.
+            openai_api_key: OpenAI/OpenRouter API key if use_llm=True.
+            base_url: API base URL (default: OpenRouter).
+            model: Model name to use for LLM analysis.
         """
         self._use_llm = use_llm
         self._openai_api_key = openai_api_key
+        self._base_url = base_url
+        self._model = model
 
         # Common patterns for UK financial documents
         self._patterns = {
@@ -175,13 +185,16 @@ class TemplateAnalyzer(BaseTemplateAnalyzer):
 
         try:
             from openai import AsyncOpenAI
-            client = AsyncOpenAI(api_key=self._openai_api_key)
-            
+            client = AsyncOpenAI(
+                api_key=self._openai_api_key,
+                base_url=self._base_url,
+            )
+
             # Combine the Few-Shot Prompt with the User Input
             full_prompt = f"{TEMPLATE_ANALYSIS_PROMPT}\n\nInput: \"{text}\"\nOutput:"
 
             response = await client.chat.completions.create(
-                model="gpt-4o",  # Or gpt-3.5-turbo if optimizing cost
+                model=self._model,
                 messages=[{"role": "system", "content": full_prompt}],
                 response_format={"type": "json_object"}, # CRITICAL: Enforce JSON
                 temperature=0.1 # Low temp for deterministic code/json

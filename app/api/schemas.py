@@ -12,6 +12,9 @@ from pydantic.types import PositiveInt
 
 from app.db.models import DocumentStatus
 
+# Re-export template-related models for backwards compatibility
+from app.strategies.template_engine import DetectedVariable
+
 
 # =============================================================================
 # Document Schemas
@@ -154,15 +157,6 @@ class ErrorResponse(BaseModel):
 # =============================================================================
 # Template Schemas
 # =============================================================================
-
-
-class DetectedVariable(BaseModel):
-    """A variable detected in the template."""
-
-    original_text: str = Field(description="The exact text found in the document")
-    suggested_variable_name: str = Field(description="Suggested snake_case variable name")
-    rationale: str = Field(description="Why this was identified as dynamic")
-    paragraph_index: int = Field(description="Paragraph position for safe replacement")
 
 
 class TemplateAnalysisResponse(BaseModel):

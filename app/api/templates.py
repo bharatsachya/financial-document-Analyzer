@@ -9,16 +9,14 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, status
+from fastapi import APIRouter, Body, Depends, HTTPException, UploadFile, status
 from fastapi.responses import FileResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_db, get_org_id
-from app.api.schemas import (
-    DetectedVariable,
-    TemplateAnalysisResponse,
-)
+from app.api.schemas import TemplateAnalysisResponse
 from app.core.config import Settings, get_settings
+from app.strategies.template_engine import DetectedVariable
 from app.strategies.template_engine.analyzer import TemplateAnalyzer
 from app.strategies.template_engine.injector import TemplateInjector
 
@@ -119,9 +117,9 @@ async def analyze_template(
 
 @router.post("/finalize", status_code=status.HTTP_201_CREATED)
 async def finalize_template(
-    template_id: uuid.UUID,
-    variables: list[DetectedVariable],
-    original_filename: str,
+    template_id: uuid.UUID = Body(..., description="The template ID from the analyze response"),
+    variables: list[DetectedVariable] = Body(..., description="Reviewed list of variables to inject"),
+    original_filename: str = Body(..., description="Original filename to locate the temp file"),
     org_id: uuid.UUID = Depends(get_org_id),
     session: AsyncSession = Depends(get_db),
     settings: Settings = Depends(get_settings),

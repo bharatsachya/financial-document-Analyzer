@@ -57,18 +57,22 @@ class Settings(BaseSettings):
         description="Celery result backend URL.",
     )
 
-    # OpenAI
-    openai_api_key: str = Field(
+    # LLM Provider (OpenRouter - OpenAI compatible)
+    openrouter_api_key: str = Field(
         default="",
-        description="OpenAI API key for embeddings.",
+        description="OpenRouter API key (OpenAI-compatible API).",
     )
-    openai_base_url: str | None = Field(
-        default=None,
-        description="Optional custom OpenAI base URL.",
+    openai_base_url: str = Field(
+        default="https://openrouter.ai/api/v1",
+        description="OpenRouter base URL (OpenAI-compatible endpoint).",
     )
-    openai_organization: str | None = Field(
-        default=None,
-        description="Optional OpenAI organization ID.",
+    llm_embedding_model: str = Field(
+        default="openai/text-embedding-3-small",
+        description="Embedding model to use (e.g., openai/text-embedding-3-small).",
+    )
+    llm_chat_model: str = Field(
+        default="openai/gpt-4o",
+        description="Chat model to use (e.g., openai/gpt-4o).",
     )
 
     # LlamaParse

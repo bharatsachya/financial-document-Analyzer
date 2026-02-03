@@ -5,8 +5,10 @@ Implements template analysis and Jinja2 tag injection for Word documents.
 
 from app.strategies.template_engine.analyzer import TemplateAnalyzer
 from app.strategies.template_engine.injector import TemplateInjector
+from app.strategies.template_engine.models import DetectedVariable
 
 __all__ = [
     "TemplateAnalyzer",
     "TemplateInjector",
+    "DetectedVariable",
 ]

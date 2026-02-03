@@ -8,8 +8,8 @@ import logging
 from pathlib import Path
 from typing import Any
 
-from app.api.schemas import DetectedVariable
 from app.interfaces.template import BaseTemplateInjector
+from app.strategies.template_engine.models import DetectedVariable
 
 logger = logging.getLogger(__name__)
 
