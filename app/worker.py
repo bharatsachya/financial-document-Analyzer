@@ -6,6 +6,7 @@ Uses an event loop to run async tasks within Celery workers.
 
 import asyncio
 import logging
+import ssl
 import uuid
 from datetime import datetime
 
@@ -24,10 +25,23 @@ logger = logging.getLogger(__name__)
 # Initialize Celery app
 settings: Settings = get_settings()
 
+# Configure SSL based on the broker URL scheme
+broker_url = settings.celery_broker_url
+backend_url = settings.celery_result_backend
+broker_ssl_config = None
+backend_ssl_config = None
+
+if broker_url.startswith("rediss://"):
+    broker_ssl_config = {"ssl_cert_reqs": ssl.CERT_NONE}
+if backend_url.startswith("rediss://"):
+    backend_ssl_config = {"ssl_cert_reqs": ssl.CERT_NONE}
+
 celery_app = Celery(
     "template_intelligence_worker",
-    broker=settings.celery_broker_url,
-    backend=settings.celery_result_backend,
+    broker=broker_url,
+    backend=backend_url,
+    broker_use_ssl=broker_ssl_config,
+    redis_backend_use_ssl=backend_ssl_config,
     include=["app.worker"],
 )
 
