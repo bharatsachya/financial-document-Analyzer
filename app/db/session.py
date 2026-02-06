@@ -189,7 +189,7 @@ async def init_db(settings: Settings | None = None) -> None:
     """
     try:
         # Import here to avoid circular dependency
-        from app.db.models import Organization, User
+        from app.db.models import Organization
 
         await create_all_tables(settings)
 
@@ -215,23 +215,6 @@ async def init_db(settings: Settings | None = None) -> None:
                     await session.commit()
 
                     logger.info(f"Created default organization: {default_org.id}")
-
-                    # Create a default user for testing
-                    logger.info("Seeding initial user...")
-                    import uuid
-
-                    default_user = User(
-                        id=uuid.UUID("3c5ff1b3-b0d6-4dba-b254-a2be667bbd52"),
-                        email="test@example.com",
-                        full_name="Test User",
-                        hashed_password="$2b$12$test",  # Placeholder, not for production
-                        organization_id=default_org.id,
-                        is_active=True,
-                    )
-                    session.add(default_user)
-                    await session.commit()
-
-                    logger.info(f"Created default user: {default_user.id}")
 
                 await session.commit()
 

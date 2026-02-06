@@ -2,7 +2,6 @@
 
 Provides reusable dependencies for routes including:
 - Database sessions
-- Authentication
 - Organization context
 """
 
@@ -15,7 +14,6 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import Settings, get_settings
-from app.db.models import User, UserRead
 from app.db.session import get_async_session
 
 logger = logging.getLogger(__name__)
@@ -81,87 +79,4 @@ async def get_org_id(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Error processing organization ID",
-        ) from e
-
-
-async def get_current_user(
-    token: str | None = Header(default=None, alias="Authorization", description="Bearer token"),
-    session: AsyncSession = Depends(get_db),
-) -> User:
-    """Dependency for getting the authenticated user from token.
-
-    Args:
-        token: The bearer token from Authorization header.
-        session: Database session.
-
-    Returns:
-        The authenticated user.
-
-    Raises:
-        HTTPException: If token is missing or user not found.
-    """
-    try:
-        if not token:
-            logger.warning("Authorization header is missing")
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Not authenticated",
-                headers={"WWW-Authenticate": "Bearer"},
-            )
-
-        # Strip "Bearer " prefix if present
-        if token.startswith("Bearer "):
-            token = token[7:]
-
-        # TODO: Implement proper JWT validation
-        # For now, this is a placeholder that demonstrates the pattern
-        # In production, decode JWT and fetch user from database
-        logger.warning("Authentication not yet implemented")
-
-        raise HTTPException(
-            status_code=status.HTTP_501_NOT_IMPLEMENTED,
-            detail="Authentication not yet implemented",
-        )
-
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Unexpected error in get_current_user: {e}", exc_info=True)
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Error processing authentication",
-        ) from e
-
-
-async def get_current_active_user(
-    current_user: User = Depends(get_current_user),
-) -> User:
-    """Dependency for getting the authenticated active user.
-
-    Args:
-        current_user: The authenticated user.
-
-    Returns:
-        The authenticated user if active.
-
-    Raises:
-        HTTPException: If user is inactive.
-    """
-    try:
-        if not current_user.is_active:
-            logger.warning(f"Inactive user attempted access: {current_user.id}")
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Inactive user",
-            )
-
-        return current_user
-
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Unexpected error in get_current_active_user: {e}", exc_info=True)
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Error verifying user status",
         ) from e

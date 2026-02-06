@@ -4,6 +4,7 @@ Analyzes Word templates to detect dynamic variables using regex patterns
 or LLM-based analysis with Few-Shot Chain-of-Thought prompting.
 """
 
+import asyncio
 import json
 import logging
 import re
@@ -52,6 +53,7 @@ class TemplateAnalyzer(BaseTemplateAnalyzer):
         openai_api_key: str | None = None,
         base_url: str = "https://openrouter.ai/api/v1",
         model: str = "openai/gpt-4o",
+        custom_prompt: str | None = None,
     ) -> None:
         """Initialize the analyzer.
 
@@ -60,11 +62,13 @@ class TemplateAnalyzer(BaseTemplateAnalyzer):
             openai_api_key: OpenAI/OpenRouter API key if use_llm=True.
             base_url: API base URL (default: OpenRouter).
             model: Model name to use for LLM analysis.
+            custom_prompt: Custom prompt text to use instead of default.
         """
         self._use_llm = use_llm
         self._openai_api_key = openai_api_key
         self._base_url = base_url
         self._model = model
+        self._custom_prompt = custom_prompt
 
         # Common patterns for UK financial documents
         self._patterns = {
@@ -92,6 +96,9 @@ class TemplateAnalyzer(BaseTemplateAnalyzer):
 
     async def analyze(self, file_path: str) -> list[DetectedVariable]:
         """Analyze document to detect dynamic variables.
+
+        Uses chunked LLM analysis for faster processing - groups paragraphs
+        into batches instead of processing one-by-one.
 
         Args:
             file_path: Path to the Word template file.
@@ -125,18 +132,23 @@ class TemplateAnalyzer(BaseTemplateAnalyzer):
 
             logger.info(f"Document loaded: {len(doc.paragraphs)} paragraphs")
 
-            # Analyze each paragraph
-            for idx, paragraph in enumerate(doc.paragraphs):
-                if not paragraph.text.strip():
-                    continue
+            # Collect non-empty paragraphs with their indices
+            paragraphs_to_analyze = [
+                (idx, p.text.strip())
+                for idx, p in enumerate(doc.paragraphs)
+                if p.text.strip() and len(p.text.strip()) > 3  # Skip very short text
+            ]
 
-                # Analyze paragraph for dynamic content
-                analysis_result = await self._analyze_paragraph(
-                    paragraph.text, idx
-                )
+            logger.info(f"Analyzing {len(paragraphs_to_analyze)} non-empty paragraphs")
 
-                if analysis_result:
-                    detected_vars.extend(analysis_result)
+            if self._use_llm and len(paragraphs_to_analyze) > 0:
+                # Use chunked LLM analysis for faster processing
+                detected_vars = await self._analyze_with_llm_chunking(paragraphs_to_analyze)
+            else:
+                # Use regex analysis (fallback)
+                for idx, text in paragraphs_to_analyze:
+                    result = self._regex_analysis(text, idx)
+                    detected_vars.extend(result)
 
             logger.info(
                 f"Analysis complete: {len(detected_vars)} variables detected "
@@ -151,6 +163,176 @@ class TemplateAnalyzer(BaseTemplateAnalyzer):
         except Exception as e:
             logger.error(f"Template analysis failed: {e}", exc_info=True)
             raise RuntimeError(f"Template analysis failed: {e}") from e
+
+    async def _analyze_with_llm_chunking(
+        self, paragraphs: list[tuple[int, str]]
+    ) -> list[DetectedVariable]:
+        """Analyze multiple paragraphs in chunks using LLM for faster processing.
+
+        Groups paragraphs into batches and processes them concurrently.
+
+        Args:
+            paragraphs: List of (index, text) tuples.
+
+        Returns:
+            List of all detected variables.
+        """
+        CHUNK_SIZE = 5  # Process 10 paragraphs per LLM call
+        detected_vars: list[DetectedVariable] = []
+
+        # Split into chunks
+        chunks = [
+            paragraphs[i:i + CHUNK_SIZE]
+            for i in range(0, len(paragraphs), CHUNK_SIZE)
+        ]
+
+        logger.info(f"Processing {len(paragraphs)} paragraphs in {len(chunks)} chunks")
+
+        for chunk_idx, chunk in enumerate(chunks):
+            try:
+                # Add timeout to prevent hanging
+                async with asyncio.timeout(120):  # 120 second timeout per chunk for slower APIs
+                    result = await self._call_llm_chunk(chunk, chunk_idx)
+                    detected_vars.extend(result)
+                    logger.debug(f"Chunk {chunk_idx + 1}/{len(chunks)} processed: {len(result)} variables")
+            except asyncio.TimeoutError:
+                logger.warning(f"Chunk {chunk_idx + 1} timed out, falling back to regex")
+                # Fallback to regex for this chunk
+                for idx, text in chunk:
+                    result = self._regex_analysis(text, idx)
+                    detected_vars.extend(result)
+            except Exception as e:
+                logger.error(f"Chunk {chunk_idx + 1} failed: {e}, falling back to regex")
+                # Fallback to regex for this chunk
+                for idx, text in chunk:
+                    result = self._regex_analysis(text, idx)
+                    detected_vars.extend(result)
+
+        return detected_vars
+
+    async def _call_llm_chunk(
+        self, chunk: list[tuple[int, str]], chunk_idx: int
+    ) -> list[DetectedVariable]:
+        """Call LLM with a chunk of paragraphs for batch analysis.
+
+        Args:
+            chunk: List of (index, text) tuples.
+            chunk_idx: Chunk index for logging.
+
+        Returns:
+            List of DetectedVariable objects.
+        """
+        if not self._openai_api_key:
+            logger.warning("No OpenAI API key provided. Falling back to regex.")
+            results = []
+            for idx, text in chunk:
+                results.extend(self._regex_analysis(text, idx))
+            return results
+
+        try:
+            from openai import AsyncOpenAI
+            client = AsyncOpenAI(
+                api_key=self._openai_api_key,
+                base_url=self._base_url,
+                timeout=60.0,  # 60 second timeout
+            )
+
+            # Use batch-specific prompt for chunking
+            # The custom prompt is designed for single paragraphs, so we use our batch prompt here
+            batch_prompt = """You are an expert Document Intelligence Engineer. Analyze the text segments.
+
+DEFINITIONS:
+1. Dynamic: Text that changes per client (Names, Dates, Risk Profiles, Amounts).
+2. Static: Legal headers, boilerplate, firm branding.
+
+TASK:
+Analyze each paragraph and return a JSON response with this exact structure:
+{
+  "paragraphs": [
+    {
+      "index": <paragraph_number_from_input>,
+      "is_dynamic": true,
+      "variables": [
+        {"original": "<exact text to replace>", "var": "variable_name_in_snake_case"}
+      ]
+    }
+  ]
+}
+
+For non-dynamic paragraphs, set "is_dynamic": false and "variables": [].
+
+PARAGRAPHS TO ANALYZE:
+"""
+
+            # Format paragraphs for batch analysis
+            paragraphs_text = "\n\n".join(
+                f"Paragraph {idx}:\n{text}"
+                for idx, text in chunk
+            )
+
+            full_prompt = batch_prompt + paragraphs_text
+
+            logger.info(f"Calling LLM for chunk {chunk_idx + 1} with {len(chunk)} paragraphs")
+
+            response = await client.chat.completions.create(
+                model=self._model,
+                messages=[{"role": "system", "content": full_prompt}],
+                response_format={"type": "json_object"},
+                temperature=0.1
+            )
+
+            content = response.choices[0].message.content
+            logger.info(f"LLM response received for chunk {chunk_idx + 1}: {len(content) if content else 0} chars")
+
+            if not content:
+                logger.warning(f"Empty LLM response for chunk {chunk_idx + 1}")
+                return []
+
+            data = json.loads(content)
+            logger.info(f"Parsed JSON for chunk {chunk_idx + 1}: {len(data.get('paragraphs', []))} paragraphs")
+
+            results = []
+
+            for para_data in data.get("paragraphs", []):
+                idx = para_data.get("index")
+                if para_data.get("is_dynamic", False):
+                    for var in para_data.get("variables", []):
+                        original = var.get("original", "")
+                        var_name = var.get("var", "")
+                        if original and var_name:
+                            results.append(
+                                DetectedVariable(
+                                    original_text=original,
+                                    suggested_variable_name=var_name,
+                                    rationale="LLM Batch Analysis",
+                                    paragraph_index=idx
+                                )
+                            )
+
+            logger.info(f"Chunk {chunk_idx + 1} extracted {len(results)} variables")
+            return results
+
+        except ImportError:
+            logger.error("openai library not installed. Run: poetry add openai")
+            # Fallback to regex
+            results = []
+            for idx, text in chunk:
+                results.extend(self._regex_analysis(text, idx))
+            return results
+        except json.JSONDecodeError as e:
+            logger.error(f"Failed to parse LLM JSON response for chunk {chunk_idx}: {e}")
+            # Fallback to regex
+            results = []
+            for idx, text in chunk:
+                results.extend(self._regex_analysis(text, idx))
+            return results
+        except Exception as e:
+            logger.error(f"LLM chunk analysis failed for chunk {chunk_idx}: {e}")
+            # Fallback to regex
+            results = []
+            for idx, text in chunk:
+                results.extend(self._regex_analysis(text, idx))
+            return results
 
     async def _analyze_paragraph(
         self, text: str, paragraph_index: int
@@ -190,8 +372,11 @@ class TemplateAnalyzer(BaseTemplateAnalyzer):
                 base_url=self._base_url,
             )
 
+            # Use custom prompt if provided, otherwise use default
+            prompt_template = self._custom_prompt if self._custom_prompt else TEMPLATE_ANALYSIS_PROMPT
+            
             # Combine the Few-Shot Prompt with the User Input
-            full_prompt = f"{TEMPLATE_ANALYSIS_PROMPT}\n\nInput: \"{text}\"\nOutput:"
+            full_prompt = f"{prompt_template}\n\nInput: \"{text}\"\nOutput:"
 
             response = await client.chat.completions.create(
                 model=self._model,

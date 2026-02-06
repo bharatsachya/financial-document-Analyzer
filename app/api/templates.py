@@ -30,7 +30,7 @@ from app.api.schemas import (
     TemplateStatusResponse,
 )
 from app.core.config import Settings, get_settings
-from app.db.models import Document, DocumentStatus, TemplateStatus, TemplateListResponse, TemplateRead, TemplateStorage
+from app.db.models import TemplateStatus, TemplateListResponse, TemplateRead, TemplateStorage
 from app.strategies.template_engine import DetectedVariable
 from app.strategies.template_engine.analyzer import TemplateAnalyzer
 from app.strategies.template_engine.injector import TemplateInjector
@@ -471,24 +471,11 @@ async def list_stored_templates(
         HTTPException: If query fails.
     """
     try:
-        # Subquery to get completed document IDs
-        completed_docs_subq = (
-            select(Document.id)
-            .where(Document.status == DocumentStatus.COMPLETED)
-            .subquery()
-        )
-
         # Query templates for this organization
-        # Only return templates that are COMPLETED (fully analyzed) and whose
-        # source document (if any) is also completed
         statement = (
             select(TemplateStorage)
             .where(TemplateStorage.org_id == org_id)
             .where(TemplateStorage.status == TemplateStatus.COMPLETED)
-            .where(
-                (TemplateStorage.source_document_id.is_(None)) |
-                (TemplateStorage.source_document_id.in_(completed_docs_subq))
-            )
             .order_by(TemplateStorage.created_at.desc())
             .offset((page - 1) * page_size)
             .limit(page_size)
@@ -497,15 +484,11 @@ async def list_stored_templates(
         result = await session.execute(statement)
         templates = result.scalars().all()
 
-        # Get total count with same filters
+        # Get total count
         count_statement = (
             select(TemplateStorage)
             .where(TemplateStorage.org_id == org_id)
             .where(TemplateStorage.status == TemplateStatus.COMPLETED)
-            .where(
-                (TemplateStorage.source_document_id.is_(None)) |
-                (TemplateStorage.source_document_id.in_(completed_docs_subq))
-            )
         )
         count_result = await session.execute(count_statement)
         total = len(count_result.scalars().all())
@@ -549,22 +532,10 @@ async def get_stored_template(
         HTTPException: If template not found.
     """
     try:
-        # Subquery to get completed document IDs
-        completed_docs_subq = (
-            select(Document.id)
-            .where(Document.status == DocumentStatus.COMPLETED)
-            .subquery()
-        )
-
         statement = (
             select(TemplateStorage)
             .where(TemplateStorage.id == template_id)
             .where(TemplateStorage.org_id == org_id)
-            # Only return template if source document is completed (or no source document)
-            .where(
-                (TemplateStorage.source_document_id.is_(None)) |
-                (TemplateStorage.source_document_id.in_(completed_docs_subq))
-            )
         )
 
         result = await session.execute(statement)
@@ -813,19 +784,9 @@ async def get_template_status(
         TemplateStatusResponse with current status and progress.
     """
     try:
-        # Subquery to get completed document IDs
-        completed_docs_subq = (
-            select(Document.id)
-            .where(Document.status == DocumentStatus.COMPLETED)
-            .subquery()
-        )
-
         query = select(TemplateStorage).where(
             TemplateStorage.id == template_id,
             TemplateStorage.org_id == org_id,
-            # Only return template if source document is completed (or no source document)
-            (TemplateStorage.source_document_id.is_(None)) |
-            (TemplateStorage.source_document_id.in_(completed_docs_subq))
         )
 
         result = await session.execute(query)
@@ -1019,13 +980,6 @@ async def list_ready_templates(
         Dict with templates list and total count.
     """
     try:
-        # Subquery to get completed document IDs
-        completed_docs_subq = (
-            select(Document.id)
-            .where(Document.status == DocumentStatus.COMPLETED)
-            .subquery()
-        )
-
         query = select(TemplateStorage).where(TemplateStorage.org_id == org_id)
 
         # Apply filters
@@ -1038,13 +992,6 @@ async def list_ready_templates(
                 query = query.where(TemplateStorage.status == status_enum)
             except ValueError:
                 pass  # Invalid status, ignore filter
-
-        # CRITICAL FIX: Only return templates where source document is completed
-        # (or template has no source document)
-        query = query.where(
-            (TemplateStorage.source_document_id.is_(None)) |
-            (TemplateStorage.source_document_id.in_(completed_docs_subq))
-        )
 
         # Count total
         count_query = select(func.count(TemplateStorage.id)).select_from(query.subquery())
@@ -1115,22 +1062,12 @@ async def get_injection_queue(
         Dict with aggregate counts and list of active jobs.
     """
     try:
-        # Subquery to get completed document IDs
-        completed_docs_subq = (
-            select(Document.id)
-            .where(Document.status == DocumentStatus.COMPLETED)
-            .subquery()
-        )
-
         # Get counts by status
         count_query = (
             select(TemplateStorage.injection_status, func.count())
             .where(
                 TemplateStorage.org_id == org_id,
                 TemplateStorage.injection_status.is_not(None),
-                # Only count templates where source document is completed (or no source document)
-                (TemplateStorage.source_document_id.is_(None)) |
-                (TemplateStorage.source_document_id.in_(completed_docs_subq))
             )
             .group_by(TemplateStorage.injection_status)
         )
@@ -1144,9 +1081,6 @@ async def get_injection_queue(
             .where(
                 TemplateStorage.org_id == org_id,
                 TemplateStorage.injection_status.is_not(None),
-                # Only include templates where source document is completed (or no source document)
-                (TemplateStorage.source_document_id.is_(None)) |
-                (TemplateStorage.source_document_id.in_(completed_docs_subq))
             )
             .order_by(TemplateStorage.injection_started_at.desc())
             .limit(20)

@@ -11,10 +11,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
-from app.api.ingest import router as ingest_router
-from app.api.organizations import router as organizations_router
 from app.api.templates import router as templates_router
-from app.api.users import router as users_router
 from app.api.schemas import ErrorResponse
 from app.core.config import Settings, get_settings
 from app.core.logging_config import setup_logging
@@ -34,7 +31,7 @@ async def lifespan(app: FastAPI):
     settings: Settings = app.state.settings
 
     # Startup
-    logger.info("Starting Document Intelligence Platform API...")
+    logger.info("Starting Template Intelligence Engine API...")
 
     # Initialize database
     try:
@@ -48,7 +45,7 @@ async def lifespan(app: FastAPI):
     yield
 
     # Shutdown
-    logger.info("Shutting down Document Intelligence Platform API...")
+    logger.info("Shutting down Template Intelligence Engine API...")
 
     # Close database connections
     try:
@@ -71,8 +68,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         settings = settings or get_settings()
 
         app = FastAPI(
-            title="Document Intelligence Platform",
-            description="Async document ingestion pipeline for UK Financial Advisory",
+            title="Template Intelligence Engine",
+            description="Template analysis and variable injection platform",
             version="0.1.0",
             lifespan=lifespan,
             docs_url="/docs",
@@ -93,15 +90,6 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
         # Include routers
         try:
-            app.include_router(ingest_router)
-            logger.info("Registered ingest router")
-
-            app.include_router(organizations_router)
-            logger.info("Registered organizations router")
-
-            app.include_router(users_router)
-            logger.info("Registered users router")
-
             app.include_router(templates_router)
             logger.info("Registered templates router")
         except Exception as e:
@@ -114,7 +102,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             """Health check endpoint for load balancers and monitoring."""
             return {
                 "status": "healthy",
-                "service": "document-intelligence-api",
+                "service": "template-intelligence-api",
                 "version": "0.1.0",
             }
 

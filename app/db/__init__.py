@@ -1,11 +1,6 @@
 """Database models and session management."""
 
-from app.db.models import (
-    Document,
-    DocumentStatus,
-    Organization,
-    User,
-)
+from app.db.models import Organization
 from app.db.session import (
     AsyncSession,
     create_all_tables,
@@ -16,9 +11,6 @@ from app.db.session import (
 __all__ = [
     # Models
     "Organization",
-    "User",
-    "Document",
-    "DocumentStatus",
     # Session
     "AsyncSession",
     "get_async_session",
