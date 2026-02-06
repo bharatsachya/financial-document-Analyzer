@@ -18,13 +18,13 @@ db: ## Initialize database
 	python -m scripts.init_db
 
 api: ## Start FastAPI backend
-	uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
+	poetry run uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 
 worker: ## Start Celery worker
-	celery -A app.worker.celery_app worker --loglevel=info
+	poetry run celery -A app.worker.celery_app worker --loglevel=info
 
 frontend: ## Start Streamlit frontend
-	streamlit run frontend/app.py
+	poetry run streamlit run frontend/app.py
 
 lint: ## Run linter
 	ruff check .
