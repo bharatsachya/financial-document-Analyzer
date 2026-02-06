@@ -202,8 +202,12 @@ class ComponentFactory:
 
         return self._vector_store_cache
 
-    def get_template_analyzer(self) -> BaseTemplateAnalyzer:
+    def get_template_analyzer(self, custom_prompt: str | None = None) -> BaseTemplateAnalyzer:
         """Get a template analyzer instance.
+
+        Args:
+            custom_prompt: Optional custom prompt for LLM analysis.
+                When provided, bypasses cache to ensure prompt isolation.
 
         Returns:
             A BaseTemplateAnalyzer implementation instance.
@@ -211,6 +215,17 @@ class ComponentFactory:
         Raises:
             ValueError: If template analyzer configuration is invalid.
         """
+        # Bypass cache when custom prompt is provided for prompt isolation
+        if custom_prompt is not None:
+            logger.info("Instantiating template analyzer with custom prompt")
+            return TemplateAnalyzer(
+                use_llm=self._settings.use_llm_for_templates,
+                openai_api_key=self._settings.openrouter_api_key,
+                base_url=self._settings.openai_base_url,
+                model=self._settings.llm_chat_model,
+                custom_prompt=custom_prompt,
+            )
+
         if self._template_analyzer_cache is None:
             logger.info("Instantiating template analyzer")
 
