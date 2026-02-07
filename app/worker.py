@@ -71,17 +71,27 @@ def run_async(coro):
     Celery workers don't have a running event loop, so we need
     to create one for async operations.
 
+    IMPORTANT: Database connections are tied to event loops.
+    We close the engine after each task to prevent connection
+    reuse across different loops.
+
     Args:
         coro: The async coroutine to run.
 
     Returns:
         The result of the coroutine.
     """
+    from app.db.session import close_db
+
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
     try:
-        return loop.run_until_complete(coro)
+        result = loop.run_until_complete(coro)
+        return result
     finally:
+        # Close database connections to prevent loop reuse issues
+        # Use the global settings that were already loaded at module level
+        loop.run_until_complete(close_db(settings))
         loop.close()
 
 
