@@ -339,12 +339,14 @@ class TemplateAPIClient:
             response.raise_for_status()
             data = response.json()
             templates = data.get("templates", [])
-            
-            # Ensure download_url is complete
+
+            # Ensure download_url is complete with org_id for browser downloads
             for t in templates:
                 if t.get("download_url") and not t.get("download_url").startswith("http"):
-                    t["download_url"] = f"{self.base_url}{t['download_url']}"
-            
+                    base_url = f"{self.base_url}{t['download_url']}"
+                    # Add org_id as query parameter for browser downloads (browsers can't send custom headers)
+                    t["download_url"] = f"{base_url}?org_id={self.org_id}"
+
             return templates
         except httpx.HTTPStatusError as e:
             logger.error(f"Failed to fetch templates for download: {e.response.status_code}")
@@ -1576,11 +1578,12 @@ def render_stored_template_inject(client: TemplateAPIClient, tmpl: dict[str, Any
                 # Show download button
                 download_url = current_status.get("download_url")
                 if download_url:
-                    # Create a proper download link with auth headers
+                    # Create a proper download link with org_id query parameter (browser downloads can't send custom headers)
+                    full_url = f"{client.base_url}{download_url}?org_id={client.org_id}"
                     st.markdown(
                         f"### 📥 Download Ready\n"
                         f"Click the link below to download your filled document:\n\n"
-                        f"[📥 Download {tmpl.get('original_filename')}]({client.base_url}{download_url})"
+                        f"[📥 Download {tmpl.get('original_filename')}]({full_url})"
                     )
 
                 # Show clear button

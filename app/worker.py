@@ -91,8 +91,21 @@ def run_async(coro):
     finally:
         # Close database connections to prevent loop reuse issues
         # Use the global settings that were already loaded at module level
-        loop.run_until_complete(close_db(settings))
-        loop.close()
+        try:
+            loop.run_until_complete(close_db(settings))
+        except Exception as e:
+            logger.warning(f"Error closing database: {e}")
+
+        # Wait for all pending tasks to complete (e.g., httpx cleanup)
+        # This prevents "Event loop is closed" errors from async clients
+        try:
+            pending = asyncio.all_tasks(loop)
+            if pending:
+                loop.run_until_complete(asyncio.gather(*pending, return_exceptions=True))
+        except Exception as e:
+            logger.warning(f"Error waiting for pending tasks: {e}")
+        finally:
+            loop.close()
 
 
 @shared_task(name="app.worker.health_check")

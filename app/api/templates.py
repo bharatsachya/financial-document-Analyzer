@@ -255,13 +255,22 @@ async def finalize_template(
 async def download_template(
     template_id: uuid.UUID,
     custom_filename: str | None = Query(default=None, description="Custom filename for download"),
+    org_id: uuid.UUID | None = Query(default=None, description="Organization ID (for browser downloads)"),
+    x_org_id: uuid.UUID | None = Header(default=None, alias="X-Org-ID", description="Organization ID from header (for API clients)"),
     settings: Settings = Depends(get_settings),
     session: AsyncSession = Depends(get_db),
 ) -> FileResponse:
     """Download the finalized template.
 
+    Supports both header-based auth (API clients) and query param (browser downloads).
+    For browser downloads: /templates/download/{id}?org_id={org_id}
+    For API clients: Use X-Org-ID header
+
     Args:
         template_id: The template ID to download.
+        custom_filename: Optional custom filename for download.
+        org_id: Organization ID from query parameter (for browser downloads).
+        x_org_id: Organization ID from X-Org-ID header (for API clients).
         settings: Application settings.
         session: Database session.
 
@@ -269,13 +278,24 @@ async def download_template(
         FileResponse with the filled template.
 
     Raises:
-        HTTPException: If template not found.
+        HTTPException: If template not found or org_id missing.
     """
     try:
-        # Query template to get org_id and file_path from database
+        # Determine org_id from either query param or header (query param takes precedence)
+        resolved_org_id = org_id or x_org_id
+        if not resolved_org_id:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Organization ID required. Provide X-Org-ID header or org_id query parameter.",
+            )
+
+        # Query template with org_id filtering for tenant isolation
         from sqlalchemy import select
 
-        query = select(TemplateStorage).where(TemplateStorage.id == template_id)
+        query = select(TemplateStorage).where(
+            TemplateStorage.id == template_id,
+            TemplateStorage.org_id == resolved_org_id
+        )
         result = await session.execute(query)
         template = result.scalar_one_or_none()
 
@@ -296,9 +316,13 @@ async def download_template(
         template_path = Path(template.file_path)
 
         if not template_path.exists():
+            logger.error(
+                f"Template file not found: {template_path} "
+                f"(template_id: {template_id}, org_id: {resolved_org_id})"
+            )
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
-                detail="Template file not found",
+                detail="Template file not found. The file may have been removed or not yet generated.",
             )
 
         # Use custom filename if provided, otherwise generate default
@@ -993,8 +1017,9 @@ async def list_ready_templates(
             except ValueError:
                 pass  # Invalid status, ignore filter
 
-        # Count total
-        count_query = select(func.count(TemplateStorage.id)).select_from(query.subquery())
+        # Count total using the query's selectable (avoids cartesian product warning)
+        from sqlalchemy import select as slct
+        count_query = slct(func.count()).select_from(query)
         count_result = await session.execute(count_query)
         total = count_result.scalar_one()
 
