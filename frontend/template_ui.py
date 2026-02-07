@@ -554,6 +554,10 @@ def render_sidebar(client: TemplateAPIClient) -> None:
         else:
             st.error("❌ API Disconnected")
             st.info(f"API URL: {API_BASE_URL}")
+            st.warning(
+                "💡 **API is asleep** - Click the link below to wake it up, then refresh:\n\n"
+                f"[🔗 Open {API_BASE_URL}]({API_BASE_URL})"
+            )
 
         st.divider()
 
