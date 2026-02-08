@@ -223,7 +223,7 @@ async def finalize_template(
         injector = TemplateInjector()
         output_path = await injector.inject_tags(
             file_path=str(temp_file_path),
-            variables=variables,
+            variables=request.variables,
         )
 
         # Generate final filename
@@ -238,7 +238,7 @@ async def finalize_template(
             "template_id": str(template_id),
             "status": "finalized",
             "download_url": f"/templates/download/{template_id}",
-            "variable_count": len(variables),
+            "variable_count": len(request.variables),
         }
 
     except HTTPException:
