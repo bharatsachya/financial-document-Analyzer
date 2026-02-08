@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Any
 
 from celery import group
-from fastapi import APIRouter, Body, Depends, HTTPException, Query, UploadFile, status
+from fastapi import APIRouter, Body, Depends, Header, HTTPException, Query, UploadFile, status
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import select, func
