@@ -6,6 +6,49 @@ A high-performance, event-driven template analysis and injection system designed
 
 This system follows a **Prompt-Based, Agentic Document Generation Architecture** powered by a **Multi-Tier Memory Architecture**. It converts static Word documents into dynamic templates through intelligent variable detection and generates highly personalized, FCA-compliant financial reports.
 
+## Memory Overview
+
+======================================================================================
+THE AGENTIC COGNITIVE ARCHITECTURE (MEMORY MAP)
+======================================================================================
+
+                           ┌─────────────────────────┐
+                           │   STREAMLIT DASHBOARD   │
+                           │ (Director-Typist Flow)  │
+                           └──────┬───────────▲──────┘
+                                  │           │
+             [ 2. Dual-Layer Feedback ]       [ 1. Generate Report ]
+                                  │           │
+                           ┌──────▼───────────┴──────┐
+                           │     API GATEWAY &       │
+                           │    CELERY ORCHESTRATOR  │
+                           └─┬──┬──────────────┬──┬──┘
+                             │  │              │  │
+         ┌───────────────────┘  │              │  └───────────────────┐
+         │                      │              │                      │
+
+=========▼========= =========▼========= =========▼========= =========▼=========
+🕸️ FACTUAL MEMORY ⚙️ PROCEDURAL MEMORY 🧠 SEMANTIC MEMORY 🎞️ EPISODIC MEMORY
+=================== =================== =================== ===================
+Datastore: Neo4j Datastore: Postgres Datastore: Qdrant Datastore: Postgres
+Format: Graph Nodes Format: Relational Format: Vector DB Format: JSONB Ledger
+
+Content: Content: Content: Content:
+Hard Client Facts Data Mapping Logic Tone & Style Rules Immutable Audits
+(Age, Income, Goals) (e.g., Tax = 20%) (e.g., "Be formal") & Event History
+
+Retrieval: Retrieval: Retrieval: Retrieval:
+Cypher Traversal Strict SQL Match Top-K Semantic Search Chronological Query
+=================== =================== =================== ===================
+│ │ │ │
+│ (Inject Facts) │ (Inject) │ (Inject Tone) │ (Log Event)
+└───────────────────┐ │ │ ┌───────────────────┘
+▼ ▼ ▼ ▼
+┌─────────────────────────┐
+│ PROMPT ASSEMBLER & │
+│ LLM (gpt-4o-mini) │
+└─────────────────────────┘
+
 ### 🧠 The Multi-Tier "Agentic" Memory System
 
 This system relies on four distinct memory tiers to synthesize reports:
