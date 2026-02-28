@@ -2010,11 +2010,24 @@ async def get_draft_versions(
 )
 async def get_version_pdf(
     version_id: uuid.UUID,
+    org_id: uuid.UUID | None = Query(default=None, description="Organization ID (for browser downloads)"),
+    x_org_id: uuid.UUID | None = Header(default=None, alias="X-Org-ID", description="Organization ID from header (for API clients)"),
     session: AsyncSession = Depends(get_db),
-    org_id: uuid.UUID = Depends(get_org_id),
 ) -> FileResponse:
-    """Get the PDF snapshot for a specific draft version."""
-    stmt = select(DraftVersion).where(DraftVersion.id == version_id).where(DraftVersion.org_id == org_id)
+    """Get the PDF snapshot for a specific draft version.
+
+    Supports both header-based auth (API clients) and query param (browser downloads).
+    For browser downloads: /versions/{id}/pdf?org_id={org_id}
+    For API clients: Use X-Org-ID header
+    """
+    resolved_org_id = org_id or x_org_id
+    if not resolved_org_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Organization ID required. Provide X-Org-ID header or org_id query parameter.",
+        )
+
+    stmt = select(DraftVersion).where(DraftVersion.id == version_id).where(DraftVersion.org_id == resolved_org_id)
     version = (await session.execute(stmt)).scalar_one_or_none()
     
     if not version:
@@ -2036,11 +2049,24 @@ async def get_version_pdf(
 )
 async def get_version_docx(
     version_id: uuid.UUID,
+    org_id: uuid.UUID | None = Query(default=None, description="Organization ID (for browser downloads)"),
+    x_org_id: uuid.UUID | None = Header(default=None, alias="X-Org-ID", description="Organization ID from header (for API clients)"),
     session: AsyncSession = Depends(get_db),
-    org_id: uuid.UUID = Depends(get_org_id),
 ):
-    """Dynamically generate and download the DOCX for a specific draft version."""
-    stmt = select(DraftVersion).where(DraftVersion.id == version_id).where(DraftVersion.org_id == org_id)
+    """Dynamically generate and download the DOCX for a specific draft version.
+
+    Supports both header-based auth (API clients) and query param (browser downloads).
+    For browser downloads: /versions/{id}/docx?org_id={org_id}
+    For API clients: Use X-Org-ID header
+    """
+    resolved_org_id = org_id or x_org_id
+    if not resolved_org_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Organization ID required. Provide X-Org-ID header or org_id query parameter.",
+        )
+
+    stmt = select(DraftVersion).where(DraftVersion.id == version_id).where(DraftVersion.org_id == resolved_org_id)
     version = (await session.execute(stmt)).scalar_one_or_none()
     
     if not version:

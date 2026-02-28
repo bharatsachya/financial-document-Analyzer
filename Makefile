@@ -15,10 +15,10 @@ dev: ## Start all services in development mode
 	@echo "Infrastructure services started. Run 'make api', 'make worker', and 'make frontend' in separate terminals."
 
 db: ## Initialize database
-	python -m scripts.init_db
+	poetry run python -m scripts.init_db
 
 api: ## Start FastAPI backend
-	uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
+	poetry run uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 
 worker: ## Start Celery worker
 	poetry run celery -A app.worker.celery_app worker --loglevel=info

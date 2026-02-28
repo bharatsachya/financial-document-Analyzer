@@ -146,7 +146,8 @@
 
       let versionsData = [];
       let activeVersionId = null;
-      let apiBaseUrl = "http://localhost:8000/api/v1/templates";
+      let apiBaseUrl = "http://localhost:8000";
+      let orgId = null;
 
       // React to arguments from Streamlit
       window.addEventListener("message", function (event) {
@@ -157,9 +158,12 @@
         activeVersionId =
           args.selected_id ||
           (versionsData.length > 0 ? versionsData[0].id : null);
-          
+
         if (args.api_base_url) {
             apiBaseUrl = args.api_base_url;
+        }
+        if (args.org_id) {
+            orgId = args.org_id;
         }
 
         renderD3Carousel();
@@ -202,7 +206,7 @@
             (d) => `
           <div>
             <span class="version-badge">v${d.version_number}</span>
-            <a href="${apiBaseUrl}/versions/${d.id}/docx" download class="download-btn" title="Download DOCX" target="_blank" onclick="event.stopPropagation()">📥 DOCX</a>
+            <a href="${apiBaseUrl}/templates/versions/${d.id}/docx?org_id=${orgId}" download class="download-btn" title="Download DOCX" target="_blank" onclick="event.stopPropagation()">📥 DOCX</a>
           </div>
           <span class="date">${new Date(d.created_at).toLocaleDateString()}</span>
         `,

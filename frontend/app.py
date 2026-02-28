@@ -1786,6 +1786,7 @@ def render_director_typist_ui(client: TemplateAPIClient) -> None:
                 versions=versions,
                 selected_id=active_version_id,
                 api_base_url=client.base_url,
+                org_id=ORG_ID,
                 key=f"d3_carousel_{template_id}_{len(versions)}"
             )
             
