@@ -4,59 +4,43 @@ A high-performance, event-driven template analysis and injection system designed
 
 ## Architecture Overview
 
-This system follows the **Strategy Pattern** and **Factory Pattern** for maximum extensibility, with full support for async background processing.
+This system follows a **Prompt-Based, Agentic Document Generation Architecture** powered by a **Multi-Tier Memory Architecture**. It converts static Word documents into dynamic templates through intelligent variable detection and generates highly personalized, FCA-compliant financial reports.
 
-### Current Architecture: Async Queue-Based Workflow
+### 🧠 The Multi-Tier "Agentic" Memory System
+
+This system relies on four distinct memory tiers to synthesize reports:
+
+- **🕸 Factual Memory (Neo4j / GraphRepository):** Acts as the source of truth for hard client data (e.g., ages, incomes, goals, risk profiles). Located in `app/db/graph.py`.
+- **🧠 Semantic Memory (Qdrant + OpenRouter):** Stores the adviser's stylistic preferences and tone rules derived from natural language feedback (e.g., "Make it more formal"). Powered by `SemanticMemoryManager`.
+- **⚙️ Procedural Memory (PostgreSQL):** Stores hard logic rules and explicit corrections (e.g., "Use 20% instead of 15% for Tax Rate"). Powered by `ProceduralMemoryManager`.
+- **🎞 Episodic Memory (PostgreSQL):** An audit ledger mapping exactly _how_ a report was generated, what variables were used, and what feedback was given. Powered by `EpisodicMemoryManager`.
+
+### 🔄 Dual-Layer Feedback Loop & Continuous Learning
+
+The AI learns continuously via the `frontend/app.py` stream-based UI and the `POST /api/feedback/capture` endpoint.
+When a user reviews a generated draft:
+
+1. **Track A (Stylistic Feedback):** Free-text feedback about the tone or layout. The Celery worker embeds this and commits it to **Semantic Memory (Qdrant)**.
+2. **Track B (Procedural Corrections):** Explicit corrections to data variables in the UI's Data Inspector. Commits these mappings to **Procedural Memory (PostgreSQL)**.
+
+### ⚡ Asynchronous Pipeline Flow
 
 ```
-┌────────────────────────────────────────────────────────────────────────────┐
-│                         Frontend (Streamlit)                               │
-│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐                     │
-│  │ Upload .docx │  │ Edit Vars    │  │ Download     │                     │
-│  └──────┬───────┘  └──────┬───────┘  └──────┬───────┘                     │
-│         │                  │                  │                             │
-│         ▼                  ▼                  ▼                             │
-│         APIClient (X-Org-ID header for multi-tenancy)                       │
-└──────────────────────────────┬───────────────────────────────────────────────┘
-                               │
-                               ▼
-┌────────────────────────────────────────────────────────────────────────────┐
-│                          FastAPI Backend                                   │
-│  ┌─────────────────────────────────────────────────────────────────────┐   │
-│  │                    Template API Routes                              │   │
-│  │  ┌──────────────────┐  ┌──────────────────┐  ┌──────────────────┐  │   │
-│  │  │ POST /analyze    │  │ POST /finalize   │  │ GET /download    │  │   │
-│  │  │ Queue to Celery  │  │ Queue to Celery  │  │ Tagged File      │  │   │
-│  │  └────────┬─────────┘  └────────┬─────────┘  └────────┬─────────┘  │   │
-│  │           │                     │                     │            │   │
-│  │           ▼                     ▼                     ▼            │   │
-│  │  ┌──────────────────┐  ┌──────────────────┐  ┌──────────────────┐ │   │
-│  │  │Celery - Analyze  │  │Celery - Finalize │  │File Storage      │ │   │
-│  │  │Template Task     │  │Template Task     │  │uploads/templates/│ │   │
-│  │  └──────────────────┘  └──────────────────┘  └──────────────────┘ │   │
-│  └─────────────────────────────────────────────────────────────────────┘   │
-└────────────────────────────────────────────────────────────────────────────┘
-                               │
-                               ▼
-┌────────────────────────────────────────────────────────────────────────────┐
-│                       Background Worker Layer                               │
-│  ┌──────────────────────────────────────────────────────────────────────┐ │
-│  │                     Celery Worker Processes                          │ │
-│  │  ┌──────────────────┐  ┌──────────────────┐  ┌──────────────────┐  │ │
-│  │  │TemplateAnalyzer  │  │TemplateInjector  │  │Batch Processing  │  │ │
-│  │  │- LLM or Regex    │  │- python-docx     │  │- Chain Batches  │  │ │
-│  │  │- Paragraph scan  │  │- Style preserve  │  │- Status tracking │  │ │
-│  │  └────────┬─────────┘  └────────┬─────────┘  └────────┬─────────┘  │ │
-│  │           │                     │                     │            │ │
-│  └───────────┼─────────────────────┼─────────────────────┼────────────┘ │
-│              ▼                     ▼                     ▼              │
-│  ┌──────────────────────────────────────────────────────────────────┐   │
-│  │                    Shared Dependencies                            │   │
-│  │  - PostgreSQL (Aiven Cloud w/ SSL)                                │   │
-│  │  - Redis (Upstash Cloud w/ SSL)                                   │   │
-│  │  - OpenRouter LLM (for intelligent analysis)                      │   │
-│  └──────────────────────────────────────────────────────────────────┘   │
-└────────────────────────────────────────────────────────────────────────────┘
+┌─────────────────┐    ┌─────────────────┐    ┌──────────────────┐
+│Upload Template &│───▶│ Generator Engine│───▶│ Review Draft &   │
+│Choose Client    │    │ (Async Worker)  │    │ Provide Feedback │
+└─────────────────┘    └────────┬────────┘    └────────┬─────────┘
+                                │                      │
+                       ┌────────▼────────┐    ┌────────▼─────────┐
+                       │1. Map Factual   │    │1. Extract Tone ->│
+                       │   Data (Neo4j)  │    │   Semantic Mem   │
+                       │2. Apply Proced- │    │2. Learn Correct- │
+                       │   ural Fixes    │    │   ions ->        │
+                       │3. Retrieve Style│    │   Procedural Mem │
+                       │   Constraints   │    └──────────────────┘
+                       │4. Call LLM to   │
+                       │   Generate Text │
+                       └─────────────────┘
 ```
 
 ### Key Benefits of Async Architecture
@@ -71,11 +55,11 @@ This system follows the **Strategy Pattern** and **Factory Pattern** for maximum
 
 The system is configured for cloud deployment with managed services:
 
-| Service | Provider | Purpose |
-|---------|----------|---------|
-| **PostgreSQL** | Aiven | Template metadata (asyncpg w/ SSL) |
-| **Redis** | Upstash | Celery broker & backend (rediss:// w/ SSL) |
-| **LLM** | OpenRouter | Intelligent variable detection (optional) |
+| Service        | Provider   | Purpose                                    |
+| -------------- | ---------- | ------------------------------------------ |
+| **PostgreSQL** | Aiven      | Template metadata (asyncpg w/ SSL)         |
+| **Redis**      | Upstash    | Celery broker & backend (rediss:// w/ SSL) |
+| **LLM**        | OpenRouter | Intelligent variable detection (optional)  |
 
 ## Quick Start
 
@@ -88,6 +72,7 @@ poetry install
 ```
 
 Or with pip:
+
 ```bash
 pip install -e .
 ```
@@ -352,13 +337,13 @@ The TIE system provides intelligent Word template analysis and value injection f
 
 ### Supported Patterns (Regex-based)
 
-| Pattern | Variable Name |
-|---------|---------------|
+| Pattern                   | Variable Name      |
+| ------------------------- | ------------------ |
 | `Mr/Mrs/Ms/Dr First Last` | `client_full_name` |
-| `DD/MM/YYYY` | `date` |
-| `£1,234.56` | `monetary_amount` |
-| `50%` | `percentage` |
-| `123 Street Road` | `address_line` |
+| `DD/MM/YYYY`              | `date`             |
+| `£1,234.56`               | `monetary_amount`  |
+| `50%`                     | `percentage`       |
+| `123 Street Road`         | `address_line`     |
 
 ### TIE Workflow
 
@@ -411,6 +396,7 @@ injector = factory.get_template_injector()
 ## Tenant Isolation
 
 All operations are scoped by `org_id`:
+
 - Database queries filter by `org_id`
 - File storage organized by `uploads/templates/{org_id}/`
 - API requires `X-Org-ID` header
@@ -469,6 +455,7 @@ Should return `{"status":"healthy",...}`
 ### Database Connection Errors
 
 For `sslmode` errors with Aiven PostgreSQL, ensure your URL uses:
+
 - `ssl=require` (asyncpg) NOT `sslmode=require` (psycopg2)
 
 ## License

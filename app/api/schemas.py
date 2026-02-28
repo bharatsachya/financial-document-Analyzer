@@ -75,6 +75,13 @@ class TemplateStatusResponse(BaseModel):
     model_config = {"from_attributes": True}
 
 
+class TemplatePreviewResponse(BaseModel):
+    """Response containing extracted template text for preview."""
+    template_id: uuid.UUID
+    template_text: str
+
+
+
 class BatchStatusResponse(BaseModel):
     """Response for batch status queries."""
 
@@ -119,3 +126,149 @@ class InjectFinalizeResponse(BaseModel):
     status: str = "queued"
     task_id: str | None = None
     message: str = "Template finalization queued"
+
+
+# =============================================================================
+# Report Learning & Preference Schemas  (Director-Typist Model)
+# =============================================================================
+
+
+class RewriteSectionRequest(BaseModel):
+    """Request to rewrite a section based on natural-language feedback."""
+
+    original_text: str = Field(
+        description="The current draft text to rewrite",
+        min_length=1,
+    )
+    user_feedback: str = Field(
+        description="Natural-language instruction (e.g., 'Make this more formal')",
+        min_length=1,
+        max_length=1000,
+    )
+
+
+class RewriteSectionResponse(BaseModel):
+    """Response with the rewritten section."""
+
+    new_text: str = Field(description="Rewritten text")
+    model: str = Field(default="openai/gpt-4o-mini", description="Model used")
+
+
+class FeedbackCaptureRequest(BaseModel):
+    """Request to capture adviser approval of a rewrite (Director-Typist)."""
+
+    adviser_id: str = Field(
+        description="Adviser identifier (e.g., adv_001)",
+        min_length=1,
+        max_length=50,
+    )
+    original_text: str = Field(
+        description="Original AI-generated text before editing",
+        min_length=1,
+    )
+    chosen_text: str = Field(
+        default="",
+        description="Approved rewritten text",
+    )
+    user_feedback: str = Field(
+        default="",
+        description="The natural-language feedback that drove the rewrite",
+    )
+    # Legacy compat — if only edited_text is provided, map it to chosen_text
+    edited_text: str = Field(
+        default="",
+        description="(Legacy) Final edited text — use chosen_text instead",
+    )
+    report_type: str | None = Field(
+        default=None,
+        description="Type of report (e.g., investment_summary, risk_assessment)",
+    )
+
+
+class FeedbackCaptureResponse(BaseModel):
+    """Response for feedback capture."""
+
+    adviser_id: str
+    status: str = "queued"
+    task_id: str | None = None
+    message: str = "Feedback captured and preference learning queued"
+
+
+class GeneratePersonalizedReportRequest(BaseModel):
+    """Request to generate a personalized report."""
+
+    adviser_id: str = Field(
+        description="Adviser identifier for preference lookup",
+    )
+    prompt: str = Field(
+        description="Original prompt for report generation",
+        min_length=1,
+    )
+    report_type: str | None = Field(
+        default=None,
+        description="Type of report being generated",
+    )
+
+
+class GeneratePersonalizedReportResponse(BaseModel):
+    """Response for personalized report generation."""
+
+    task_id: str = Field(description="Celery task ID for tracking")
+    status: str = "queued"
+    message: str = "Report generation with personalization queued"
+
+
+class GenerateDraftRequest(BaseModel):
+    """Request to generate a draft report directly via LLM."""
+
+    adviser_id: str = Field(
+        description="Adviser identifier (e.g., adv_001)",
+        min_length=1,
+    )
+    client_id: str = Field(
+        description="Client identifier (e.g., client_123)",
+        min_length=1,
+    )
+    topic: str = Field(
+        description="The topic or context of the report (e.g., 'Portfolio Review')",
+        min_length=1,
+    )
+    template_id: uuid.UUID | None = Field(
+        default=None,
+        description="The ID of the stored template to use",
+    )
+    template_text: str | None = Field(
+        default=None,
+        description="The raw template text to fill in (if not using template_id)",
+    )
+
+
+class GenerateDraftResponse(BaseModel):
+    """Response containing the generated draft report."""
+
+    report_id: uuid.UUID
+    generated_text: str
+    extracted_variables: dict[str, Any]
+    sources: dict[str, list[str]]
+    session_id: uuid.UUID
+    timestamp: str
+    version_id: uuid.UUID | None = None
+    version_number: int | None = None
+
+
+class DraftVersionListItem(BaseModel):
+    """Summary of a draft version for list views."""
+    id: uuid.UUID
+    version_number: int
+    adviser_id: str
+    feedback_used: str | None
+    generated_text: str
+    created_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class DraftVersionListResponse(BaseModel):
+    """Response containing a list of draft versions."""
+    template_id: uuid.UUID
+    versions: list[DraftVersionListItem]

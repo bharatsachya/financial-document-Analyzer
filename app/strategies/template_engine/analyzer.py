@@ -231,15 +231,16 @@ class TemplateAnalyzer(BaseTemplateAnalyzer):
 
         try:
             from openai import AsyncOpenAI
-            client = AsyncOpenAI(
+            
+            # Use async context manager to ensure httpx.AsyncClient is closed properly
+            async with AsyncOpenAI(
                 api_key=self._openai_api_key,
                 base_url=self._base_url,
                 timeout=60.0,  # 60 second timeout
-            )
-
-            # Use batch-specific prompt for chunking
-            # The custom prompt is designed for single paragraphs, so we use our batch prompt here
-            batch_prompt = """You are an expert Document Intelligence Engineer. Analyze the text segments.
+            ) as client:
+                # Use batch-specific prompt for chunking
+                # The custom prompt is designed for single paragraphs, so we use our batch prompt here
+                batch_prompt = """You are an expert Document Intelligence Engineer. Analyze the text segments.
 
 DEFINITIONS:
 1. Dynamic: Text that changes per client (Names, Dates, Risk Profiles, Amounts).
@@ -264,22 +265,22 @@ For non-dynamic paragraphs, set "is_dynamic": false and "variables": [].
 PARAGRAPHS TO ANALYZE:
 """
 
-            # Format paragraphs for batch analysis
-            paragraphs_text = "\n\n".join(
-                f"Paragraph {idx}:\n{text}"
-                for idx, text in chunk
-            )
+                # Format paragraphs for batch analysis
+                paragraphs_text = "\n\n".join(
+                    f"Paragraph {idx}:\n{text}"
+                    for idx, text in chunk
+                )
 
-            full_prompt = batch_prompt + paragraphs_text
+                full_prompt = batch_prompt + paragraphs_text
 
-            logger.info(f"Calling LLM for chunk {chunk_idx + 1} with {len(chunk)} paragraphs")
+                logger.info(f"Calling LLM for chunk {chunk_idx + 1} with {len(chunk)} paragraphs")
 
-            response = await client.chat.completions.create(
-                model=self._model,
-                messages=[{"role": "system", "content": full_prompt}],
-                response_format={"type": "json_object"},
-                temperature=0.1
-            )
+                response = await client.chat.completions.create(
+                    model=self._model,
+                    messages=[{"role": "system", "content": full_prompt}],
+                    response_format={"type": "json_object"},
+                    temperature=0.1
+                )
 
             content = response.choices[0].message.content
             logger.info(f"LLM response received for chunk {chunk_idx + 1}: {len(content) if content else 0} chars")
@@ -367,23 +368,24 @@ PARAGRAPHS TO ANALYZE:
 
         try:
             from openai import AsyncOpenAI
-            client = AsyncOpenAI(
+            
+            # Use async context manager to ensure proper cleanup
+            async with AsyncOpenAI(
                 api_key=self._openai_api_key,
                 base_url=self._base_url,
-            )
+            ) as client:
+                # Use custom prompt if provided, otherwise use default
+                prompt_template = self._custom_prompt if self._custom_prompt else TEMPLATE_ANALYSIS_PROMPT
+                
+                # Combine the Few-Shot Prompt with the User Input
+                full_prompt = f"{prompt_template}\n\nInput: \"{text}\"\nOutput:"
 
-            # Use custom prompt if provided, otherwise use default
-            prompt_template = self._custom_prompt if self._custom_prompt else TEMPLATE_ANALYSIS_PROMPT
-            
-            # Combine the Few-Shot Prompt with the User Input
-            full_prompt = f"{prompt_template}\n\nInput: \"{text}\"\nOutput:"
-
-            response = await client.chat.completions.create(
-                model=self._model,
-                messages=[{"role": "system", "content": full_prompt}],
-                response_format={"type": "json_object"}, # CRITICAL: Enforce JSON
-                temperature=0.1 # Low temp for deterministic code/json
-            )
+                response = await client.chat.completions.create(
+                    model=self._model,
+                    messages=[{"role": "system", "content": full_prompt}],
+                    response_format={"type": "json_object"}, # CRITICAL: Enforce JSON
+                    temperature=0.1 # Low temp for deterministic code/json
+                )
 
             content = response.choices[0].message.content
             if not content:

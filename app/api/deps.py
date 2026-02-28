@@ -33,6 +33,9 @@ async def get_db(
     try:
         async for session in get_async_session(settings):
             yield session
+    except HTTPException:
+        # Re-raise HTTPExceptions without wrapping them as Database connection errors
+        raise
     except Exception as e:
         logger.error(f"Error getting database session: {e}", exc_info=True)
         raise HTTPException(

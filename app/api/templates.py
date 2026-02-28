@@ -23,17 +23,31 @@ from app.api.deps import get_db, get_org_id
 from app.api.schemas import (
     BatchStatusResponse,
     BatchUploadResponse,
+    FeedbackCaptureRequest,
+    FeedbackCaptureResponse,
+    GeneratePersonalizedReportRequest,
+    GeneratePersonalizedReportResponse,
+    GenerateDraftRequest,
+    GenerateDraftResponse,
     InjectFinalizeRequest,
     InjectFinalizeResponse,
     RandomInjectRequest,
+    RewriteSectionRequest,
+    RewriteSectionResponse,
     TemplateAnalysisResponse,
     TemplateStatusResponse,
+    TemplatePreviewResponse,
+    DraftVersionListItem,
+    DraftVersionListResponse,
 )
 from app.core.config import Settings, get_settings
 from app.db.models import TemplateStatus, TemplateListResponse, TemplateRead, TemplateStorage
+from app.db.database import DraftVersion
 from app.strategies.template_engine import DetectedVariable
 from app.strategies.template_engine.analyzer import TemplateAnalyzer
 from app.strategies.template_engine.injector import TemplateInjector
+
+from app.services.generator import generate_report
 
 logger = logging.getLogger(__name__)
 
@@ -582,6 +596,228 @@ async def get_stored_template(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Template retrieval failed: {str(e)}",
         ) from e
+
+
+@router.get(
+    "/stored/{template_id}/preview",
+    response_model=TemplatePreviewResponse,
+    status_code=status.HTTP_200_OK,
+)
+async def get_stored_template_preview(
+    template_id: uuid.UUID,
+    org_id: uuid.UUID = Depends(get_org_id),
+    session: AsyncSession = Depends(get_db),
+) -> dict[str, Any]:
+    """Retrieve the raw text content of a stored template for preview.
+
+    Args:
+        template_id: The template ID to retrieve.
+        org_id: Organization ID from X-Org-ID header.
+        session: Database session.
+
+    Returns:
+        TemplatePreviewResponse with parsed template text.
+
+    Raises:
+        HTTPException: If template not found or docx cannot be parsed.
+    """
+    try:
+        statement = (
+            select(TemplateStorage)
+            .where(TemplateStorage.id == template_id)
+            .where(TemplateStorage.org_id == org_id)
+        )
+
+        result = await session.execute(statement)
+        template = result.scalar_one_or_none()
+
+        if not template:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Template not found",
+            )
+            
+        import docx
+        import re as _re
+        try:
+            doc = docx.Document(template.file_path)
+            
+            def _highlight_vars(text: str) -> str:
+                """Wrap {{ var }} in highlighted spans."""
+                return _re.sub(
+                    r'(\{\{.*?\}\})',
+                    r'<span style="background:#3a3878;color:#ffb86c;padding:2px 6px;'
+                    r'border-radius:4px;font-family:monospace;font-weight:600;">\1</span>',
+                    text,
+                )
+            
+            def _run_to_html(run) -> str:
+                """Convert a single Run to HTML with formatting."""
+                text = run.text
+                if not text:
+                    return ""
+                text = _highlight_vars(text)
+                if run.bold:
+                    text = f"<b>{text}</b>"
+                if run.italic:
+                    text = f"<i>{text}</i>"
+                if run.underline:
+                    text = f"<u>{text}</u>"
+                return text
+            
+            def _para_to_html(para) -> str:
+                """Convert a Paragraph to an HTML block."""
+                inner = "".join(_run_to_html(r) for r in para.runs)
+                if not inner.strip():
+                    return "<br>"
+                
+                style_name = (para.style.name or "").lower()
+                if style_name.startswith("heading 1"):
+                    return f'<h2 style="color:#e0e0e0;margin:18px 0 8px;">{inner}</h2>'
+                elif style_name.startswith("heading 2"):
+                    return f'<h3 style="color:#d0d0d0;margin:14px 0 6px;">{inner}</h3>'
+                elif style_name.startswith("heading 3"):
+                    return f'<h4 style="color:#c0c0c0;margin:10px 0 4px;">{inner}</h4>'
+                elif "list" in style_name or "bullet" in style_name:
+                    return f'<li style="margin-left:20px;">{inner}</li>'
+                else:
+                    return f'<p style="margin:6px 0;">{inner}</p>'
+            
+            def _table_to_html(table) -> str:
+                """Convert a Table to an HTML table."""
+                rows_html = []
+                for i, row in enumerate(table.rows):
+                    cells = []
+                    for cell in row.cells:
+                        cell_text = _highlight_vars(cell.text)
+                        tag = "th" if i == 0 else "td"
+                        cells.append(
+                            f'<{tag} style="border:1px solid #555;padding:8px;'
+                            f'background:{("#2a2a3e" if i == 0 else "#1e1e2e")};">'
+                            f'{cell_text}</{tag}>'
+                        )
+                    rows_html.append(f'<tr>{"".join(cells)}</tr>')
+                return (
+                    '<table style="border-collapse:collapse;width:100%;margin:12px 0;">'
+                    + "".join(rows_html)
+                    + "</table>"
+                )
+            
+            # Build HTML from document body elements in order
+            html_parts = []
+            for element in doc.element.body:
+                tag = element.tag.split("}")[-1]  # Strip namespace
+                if tag == "p":
+                    para = docx.oxml.ns.qn("w:p")
+                    # Find the matching Paragraph object
+                    for p in doc.paragraphs:
+                        if p._element is element:
+                            html_parts.append(_para_to_html(p))
+                            break
+                elif tag == "tbl":
+                    for t in doc.tables:
+                        if t._element is element:
+                            html_parts.append(_table_to_html(t))
+                            break
+            
+            template_text = "\n".join(html_parts)
+            
+        except Exception as docx_e:
+            logger.error(f"Failed to read docx for {template_id}: {docx_e}")
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Failed to extract text from template document",
+            )
+
+        return {
+            "template_id": template.id,
+            "template_text": template_text
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Template preview failed: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Template preview failed: {str(e)}",
+        ) from e
+
+
+@router.get(
+    "/stored/{template_id}/pdf",
+    status_code=status.HTTP_200_OK,
+)
+async def get_stored_template_pdf(
+    template_id: uuid.UUID,
+    org_id: uuid.UUID = Depends(get_org_id),
+    session: AsyncSession = Depends(get_db),
+    settings: Settings = Depends(get_settings),
+) -> FileResponse:
+    """Convert a stored DOCX template to PDF and serve it.
+
+    The PDF is cached on disk so repeated requests don't re-convert.
+    """
+    try:
+        statement = (
+            select(TemplateStorage)
+            .where(TemplateStorage.id == template_id)
+            .where(TemplateStorage.org_id == org_id)
+        )
+        result = await session.execute(statement)
+        template = result.scalar_one_or_none()
+
+        if not template:
+            raise HTTPException(status_code=404, detail="Template not found")
+
+        docx_path = Path(template.file_path)
+        if not docx_path.exists():
+            raise HTTPException(status_code=404, detail="Template file not found on disk")
+
+        # Cache PDF next to the DOCX
+        pdf_path = docx_path.with_suffix(".pdf")
+
+        if not pdf_path.exists():
+            # Try docx2pdf first (uses MS Word on macOS via appscript)
+            try:
+                from docx2pdf import convert as docx2pdf_convert
+                docx2pdf_convert(str(docx_path), str(pdf_path))
+            except Exception as e1:
+                logger.warning(f"docx2pdf failed ({e1}), trying LibreOffice fallback...")
+                # Fallback: LibreOffice headless
+                import subprocess
+                try:
+                    subprocess.run(
+                        [
+                            "libreoffice", "--headless", "--convert-to", "pdf",
+                            "--outdir", str(docx_path.parent),
+                            str(docx_path),
+                        ],
+                        check=True,
+                        capture_output=True,
+                        timeout=60,
+                    )
+                except Exception as e2:
+                    logger.warning(f"LibreOffice fallback also failed: {e2}")
+                    raise HTTPException(
+                        status_code=404,
+                        detail="PDF conversion failed. Ensure MS Word or LibreOffice is installed.",
+                    )
+
+        if not pdf_path.exists():
+            raise HTTPException(status_code=404, detail="PDF conversion produced no output")
+
+        return FileResponse(
+            path=str(pdf_path),
+            media_type="application/pdf",
+            filename=f"{docx_path.stem}.pdf",
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"PDF generation failed: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"PDF generation failed: {str(e)}") from e
 
 
 # =============================================================================
@@ -1448,3 +1684,427 @@ async def delete_prompt(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to delete prompt: {str(e)}",
         ) from e
+
+
+# =============================================================================
+# Report Learning & Preference Endpoints  (Director-Typist Model)
+# =============================================================================
+
+
+@router.post(
+    "/rewrite-section",
+    response_model=RewriteSectionResponse,
+    status_code=status.HTTP_200_OK,
+)
+async def rewrite_section(
+    payload: RewriteSectionRequest,
+    settings: Settings = Depends(get_settings),
+) -> RewriteSectionResponse:
+    """Feature 1 — Synchronous section rewrite via LLM.
+
+    Accepts the current draft and natural-language feedback ("make it more formal"),
+    calls OpenRouter gpt-4o-mini, and returns the rewritten text immediately.
+
+    This is synchronous (no Celery) because the user is waiting in the UI.
+    """
+    from openai import OpenAI
+
+    oai = OpenAI(
+        api_key=settings.openrouter_api_key,
+        base_url=settings.openai_base_url,
+    )
+
+    system_prompt = (
+        "You are an expert UK financial advisory report writer. "
+        "Rewrite the following text applying ONLY the user's specific instruction. "
+        "Preserve all factual content, regulatory language, and data. "
+        "Return ONLY the rewritten text, nothing else."
+    )
+
+    user_prompt = (
+        f"INSTRUCTION: {payload.user_feedback}\n\n"
+        f"TEXT TO REWRITE:\n{payload.original_text}"
+    )
+
+    response = oai.chat.completions.create(
+        model="openai/gpt-4o-mini",
+        messages=[
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt},
+        ],
+        temperature=0.4,
+        max_tokens=2000,
+    )
+
+    new_text = response.choices[0].message.content or ""
+    logger.info(f"Rewrite complete ({len(new_text)} chars) for feedback: {payload.user_feedback[:80]}")
+
+    return RewriteSectionResponse(new_text=new_text)
+
+
+@router.post(
+    "/capture-feedback",
+    response_model=FeedbackCaptureResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+async def capture_feedback(
+    payload: FeedbackCaptureRequest,
+    org_id: uuid.UUID = Depends(get_org_id),
+    settings: Settings = Depends(get_settings),
+) -> FeedbackCaptureResponse:
+    """Feature 3 — RLHF Capture: accept approved rewrite and trigger Celery task.
+
+    In the Director-Typist model the user_feedback string IS the rule.
+    We embed it directly and store in Qdrant — no expensive LLM inference needed.
+    """
+    from app.worker import store_preference_task
+
+    task_id = str(uuid.uuid4())
+
+    # Normalize: support both new (chosen_text) and legacy (edited_text) fields
+    chosen = payload.chosen_text or payload.edited_text
+    feedback = payload.user_feedback
+
+    task_payload = {
+        "adviser_id": payload.adviser_id,
+        "user_feedback": feedback,
+        "original_text": payload.original_text,
+        "chosen_text": chosen,
+        "org_id": str(org_id),
+        "task_id": task_id,
+    }
+
+    store_preference_task.delay(task_payload)
+
+    logger.info(f"Feedback captured for adviser {payload.adviser_id}, task {task_id}")
+
+    return FeedbackCaptureResponse(
+        adviser_id=payload.adviser_id,
+        status="queued",
+        task_id=task_id,
+        message="Feedback captured — preference will be embedded and stored in Qdrant",
+    )
+
+
+@router.post(
+    "/generate-personalized-report",
+    response_model=GeneratePersonalizedReportResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+async def generate_personalized_report_endpoint(
+    payload: GeneratePersonalizedReportRequest,
+    org_id: uuid.UUID = Depends(get_org_id),
+    session: AsyncSession = Depends(get_db),
+    settings: Settings = Depends(get_settings),
+) -> GeneratePersonalizedReportResponse:
+    """Generate a personalized report using learned org preferences from Qdrant.
+
+    Args:
+        payload: Report generation request with adviser_id and prompt.
+        org_id: Organization ID from X-Org-ID header.
+        session: Database session.
+        settings: Application settings.
+
+    Returns:
+        GeneratePersonalizedReportResponse with task ID for tracking.
+    """
+    try:
+        from app.worker import celery_app
+
+        # Queue the personalized generation task
+        task = celery_app.send_task(
+            "app.worker.generate_personalized_report",
+            kwargs={
+                "adviser_id": payload.adviser_id,
+                "prompt": payload.prompt,
+                "org_id": str(org_id),
+            },
+        )
+
+        logger.info(
+            f"Personalized report generation queued for adviser {payload.adviser_id}, task {task.id}"
+        )
+
+        return GeneratePersonalizedReportResponse(
+            task_id=task.id,
+            status="queued",
+            message="Report generation with personalization queued",
+        )
+
+    except Exception as e:
+        logger.error(f"Failed to queue personalized report generation: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to queue personalized report generation: {str(e)}",
+        ) from e
+
+
+@router.post(
+    "/generate-draft",
+    response_model=GenerateDraftResponse,
+    status_code=status.HTTP_200_OK,
+)
+async def generate_draft_endpoint(
+    payload: GenerateDraftRequest,
+    session: AsyncSession = Depends(get_db),
+    org_id: uuid.UUID = Depends(get_org_id),
+    settings: Settings = Depends(get_settings),
+) -> dict[str, Any]:
+    """Generate a real draft report by orchestrating Neo4j, Qdrant, and PostgreSQL memory.
+    
+    This replaces the mock data in the Director-Typist UI.
+    """
+    try:
+        logger.info(f"Generating draft for adviser {payload.adviser_id}, client {payload.client_id}")
+        
+        template_text = payload.template_text
+        if payload.template_id:
+            query = select(TemplateStorage).where(
+                TemplateStorage.id == payload.template_id,
+                TemplateStorage.org_id == org_id
+            )
+            result = await session.execute(query)
+            template = result.scalar_one_or_none()
+            if not template:
+                raise HTTPException(status_code=404, detail="Template not found")
+            
+            import docx
+            doc = docx.Document(template.file_path)
+            template_text = "\n".join([p.text for p in doc.paragraphs])
+            
+        if not template_text:
+            raise HTTPException(status_code=400, detail="Must provide template_id or template_text")
+
+        result = await generate_report(
+            adviser_id=payload.adviser_id,
+            client_id=payload.client_id,
+            topic=payload.topic,
+            template_text=template_text,
+            org_id=org_id,
+        )
+        
+        # --- Draft Versioning Logic ---
+        version_id = None
+        version_number = 1
+        
+        if payload.template_id:
+            # Calculate next version number
+            count_stmt = select(func.count(DraftVersion.id)).where(DraftVersion.template_id == payload.template_id)
+            v_count = (await session.execute(count_stmt)).scalar() or 0
+            version_number = v_count + 1
+            
+            # Save the text to a temporary DOCX to generate the PDF snapshot
+            import docx
+            import tempfile
+            from pathlib import Path
+            
+            draft_pdf_path = None
+            try:
+                # Create a simple DOCX for the generated text to generate a PDF snapshot
+                temp_dir = Path(tempfile.gettempdir()) / f"draft_{payload.template_id}_{uuid.uuid4().hex[:8]}"
+                temp_dir.mkdir(parents=True, exist_ok=True)
+                
+                temp_docx = temp_dir / "draft.docx"
+                temp_pdf = temp_dir / "draft.pdf"
+                
+                new_doc = docx.Document()
+                for para_text in result.get("generated_text", "").split("\n"):
+                    if para_text.strip():
+                        new_doc.add_paragraph(para_text.strip())
+                
+                new_doc.save(str(temp_docx))
+                
+                # Convert to PDF
+                from docx2pdf import convert as docx2pdf_convert
+                try:
+                    docx2pdf_convert(str(temp_docx), str(temp_pdf))
+                    draft_pdf_path = str(temp_pdf)
+                except Exception as e_pdf:
+                    logger.warning(f"Draft version PDF conversion failed via docx2pdf: {e_pdf}, trying LibreOffice...")
+                    import subprocess
+                    try:
+                        subprocess.run(
+                            [
+                                "libreoffice", "--headless", "--convert-to", "pdf",
+                                "--outdir", str(temp_dir),
+                                str(temp_docx),
+                            ],
+                            check=True,
+                            capture_output=True,
+                            timeout=60,
+                        )
+                        if temp_pdf.exists():
+                            draft_pdf_path = str(temp_pdf)
+                    except Exception as e_lo:
+                        logger.error(f"LibreOffice drafting also failed: {e_lo}")
+            except Exception as e:
+                logger.error(f"Failed to generate draft version PDF snapshot: {e}", exc_info=True)
+                
+            # Insert the DraftVersion
+            draft_version = DraftVersion(
+                template_id=payload.template_id,
+                org_id=org_id,
+                version_number=version_number,
+                adviser_id=payload.adviser_id,
+                generated_text=result.get("generated_text", ""),
+                extracted_variables=result.get("extracted_variables", {}),
+                feedback_used=None,  # Will be updated if stylistic feedback was provided in the prompt?
+                pdf_path=draft_pdf_path
+            )
+            session.add(draft_version)
+            await session.commit()
+            await session.refresh(draft_version)
+            
+            version_id = draft_version.id
+            result["version_id"] = version_id
+            result["version_number"] = version_number
+        
+        return result
+    except Exception as e:
+        logger.error(f"Draft generation failed: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Draft generation failed: {str(e)}",
+        ) from e
+
+
+@router.get(
+    "/stored/{template_id}/versions",
+    response_model=DraftVersionListResponse,
+    status_code=status.HTTP_200_OK,
+)
+async def get_draft_versions(
+    template_id: uuid.UUID,
+    session: AsyncSession = Depends(get_db),
+    org_id: uuid.UUID = Depends(get_org_id),
+) -> dict[str, Any]:
+    """Get all draft versions for a specific template."""
+    stmt = (
+        select(DraftVersion)
+        .where(DraftVersion.template_id == template_id)
+        .where(DraftVersion.org_id == org_id)
+        .order_by(DraftVersion.version_number.desc())
+    )
+    result = await session.execute(stmt)
+    versions = result.scalars().all()
+    
+    return {
+        "template_id": template_id,
+        "versions": [
+            {
+                "id": v.id,
+                "version_number": v.version_number,
+                "adviser_id": v.adviser_id,
+                "feedback_used": v.feedback_used,
+                "generated_text": v.generated_text,
+                "created_at": v.created_at,
+            }
+            for v in versions
+        ]
+    }
+
+
+@router.get(
+    "/versions/{version_id}/pdf",
+    status_code=status.HTTP_200_OK,
+)
+async def get_version_pdf(
+    version_id: uuid.UUID,
+    session: AsyncSession = Depends(get_db),
+    org_id: uuid.UUID = Depends(get_org_id),
+) -> FileResponse:
+    """Get the PDF snapshot for a specific draft version."""
+    stmt = select(DraftVersion).where(DraftVersion.id == version_id).where(DraftVersion.org_id == org_id)
+    version = (await session.execute(stmt)).scalar_one_or_none()
+    
+    if not version:
+        raise HTTPException(status_code=404, detail="Draft version not found")
+        
+    if not version.pdf_path or not os.path.exists(version.pdf_path):
+        raise HTTPException(status_code=404, detail="PDF snapshot not available for this version")
+        
+    return FileResponse(
+        path=version.pdf_path,
+        media_type="application/pdf",
+        filename=f"draft_v{version.version_number}.pdf",
+    )
+
+
+@router.get(
+    "/versions/{version_id}/docx",
+    status_code=status.HTTP_200_OK,
+)
+async def get_version_docx(
+    version_id: uuid.UUID,
+    session: AsyncSession = Depends(get_db),
+    org_id: uuid.UUID = Depends(get_org_id),
+):
+    """Dynamically generate and download the DOCX for a specific draft version."""
+    stmt = select(DraftVersion).where(DraftVersion.id == version_id).where(DraftVersion.org_id == org_id)
+    version = (await session.execute(stmt)).scalar_one_or_none()
+    
+    if not version:
+        raise HTTPException(status_code=404, detail="Draft version not found")
+        
+    if not version.generated_text:
+        raise HTTPException(status_code=404, detail="No generated text available for this version")
+        
+    import docx
+    import io
+    from fastapi.responses import StreamingResponse
+    
+    doc = docx.Document()
+    for para_text in version.generated_text.split("\n"):
+        if para_text.strip():
+            doc.add_paragraph(para_text.strip())
+            
+    file_stream = io.BytesIO()
+    doc.save(file_stream)
+    file_stream.seek(0)
+    
+    headers = {
+        "Content-Disposition": f"attachment; filename=draft_v{version.version_number}.docx"
+    }
+    return StreamingResponse(
+        file_stream, 
+        media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document", 
+        headers=headers
+    )
+
+
+@router.get(
+    "/adviser-preferences/{adviser_id}",
+    status_code=status.HTTP_200_OK,
+)
+async def get_adviser_preferences(
+    adviser_id: str,
+    org_id: uuid.UUID = Depends(get_org_id),
+    settings: Settings = Depends(get_settings),
+) -> dict[str, Any]:
+    """List learned style preferences for an adviser from Qdrant.
+
+    Used by the Memory Insights panel in the frontend.
+    """
+    try:
+        from app.db.qdrant_client import list_preferences
+
+        preferences = list_preferences(adviser_id=adviser_id, settings=settings)
+
+        return {
+            "adviser_id": adviser_id,
+            "org_id": str(org_id),
+            "rules": preferences,
+            "total": len(preferences),
+        }
+
+    except Exception as e:
+        logger.error(f"Failed to get adviser preferences: {e}", exc_info=True)
+        return {
+            "adviser_id": adviser_id,
+            "org_id": str(org_id),
+            "rules": [],
+            "total": 0,
+            "error": str(e),
+        }
+
+

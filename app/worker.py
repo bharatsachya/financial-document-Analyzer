@@ -9,9 +9,12 @@ import logging
 import ssl
 import uuid
 from datetime import datetime
+from typing import Any
 
+import httpx
 from celery import Celery, shared_task
 from celery.signals import worker_ready
+import sqlalchemy
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -101,7 +104,12 @@ def run_async(coro):
         try:
             pending = asyncio.all_tasks(loop)
             if pending:
+                for task in pending:
+                    task.cancel()
                 loop.run_until_complete(asyncio.gather(*pending, return_exceptions=True))
+                
+            # Properly shutdown async resource generators
+            loop.run_until_complete(loop.shutdown_asyncgens())
         except Exception as e:
             logger.warning(f"Error waiting for pending tasks: {e}")
         finally:
@@ -240,7 +248,59 @@ async def _analyze_template_async(template_id: str) -> dict:
             else:
                 logger.info("Using system default prompt for template analysis")
 
-            # Run TemplateAnalyzer with custom prompt from database
+            # === MEMORY INJECTION: Retrieve learned style rules from Qdrant ===
+            try:
+                from openai import OpenAI
+                from app.db.qdrant_client import query_preferences
+
+                oai = OpenAI(
+                    api_key=settings.openrouter_api_key,
+                    base_url=settings.openai_base_url,
+                )
+
+                # Embed a generic query to retrieve relevant style rules
+                embed_resp = oai.embeddings.create(
+                    model="openai/text-embedding-3-small",
+                    input="template analysis style and formatting rules",
+                    encoding_format="float",
+                )
+                query_vector = embed_resp.data[0].embedding
+
+                # Query Qdrant — use org_id as a proxy for adviser_id in template context
+                org_id_str = str(template.org_id)
+                style_rules = query_preferences(
+                    adviser_id=org_id_str,
+                    query_embedding=query_vector,
+                    top_k=3,
+                    settings=settings,
+                )
+
+                if style_rules:
+                    rules_text = "\n".join(
+                        f"  {i+1}. {r['rule_text']}" for i, r in enumerate(style_rules)
+                    )
+                    memory_injection = (
+                        f"\n\nCRITICAL INSTRUCTIONS (learned from previous feedback):\n"
+                        f"{rules_text}\n"
+                        f"Apply these rules when analyzing and naming variables."
+                    )
+
+                    if custom_prompt:
+                        custom_prompt = custom_prompt + memory_injection
+                    else:
+                        custom_prompt = memory_injection
+
+                    logger.info(
+                        f"Injected {len(style_rules)} learned style rules into analysis prompt"
+                    )
+                else:
+                    logger.info("No learned style rules found — using base prompt only")
+
+            except Exception as mem_err:
+                # Non-fatal: if Qdrant is down, proceed without memory
+                logger.warning(f"Memory retrieval failed (non-fatal): {mem_err}")
+
+            # Run TemplateAnalyzer with (potentially augmented) prompt
             from app.strategies.template_engine import TemplateAnalyzer
 
             analyzer = factory.get_template_analyzer(custom_prompt=custom_prompt)
@@ -574,6 +634,304 @@ async def _check_and_start_next_batch(session: AsyncSession, current_batch_id: s
 
     except Exception as e:
         logger.error(f"Error checking/starting next batch: {e}", exc_info=True)
+
+
+# =============================================================================
+# Report Learning & Preference Tasks  (Director-Typist Model)
+# =============================================================================
+#
+# In the Director-Typist model the user gives *natural-language feedback*
+# ("make this more formal"), the AI rewrites, and on approval we store the
+# user's feedback string directly as the stylistic rule.  No LLM inference
+# step is needed because the user already stated their intent explicitly.
+# =============================================================================
+
+
+@shared_task(bind=True, name="app.worker.store_preference")
+def store_preference_task(self, payload: dict) -> dict:
+    """Store a learned style preference in Qdrant (Feature 3).
+
+    Pipeline:
+      1. Read the user_feedback string from the payload.
+      2. Call OpenRouter text-embedding-3-small to embed it.
+      3. Upsert the vector + metadata into Qdrant org_style_preferences.
+
+    Because the user explicitly stated the rule ("make it more formal"),
+    we skip the expensive LLM-inference step entirely.
+
+    Args:
+        self:    Celery task instance.
+        payload: Dict with keys:
+                   adviser_id, user_feedback, original_text, chosen_text, org_id.
+
+    Returns:
+        Dict with status and the Qdrant point ID.
+    """
+    adviser_id   = payload.get("adviser_id", "unknown")
+    user_feedback = payload.get("user_feedback", "")
+    original_text = payload.get("original_text", "")
+    chosen_text   = payload.get("chosen_text", "")
+    org_id        = payload.get("org_id", "")
+
+    if not user_feedback:
+        logger.warning(f"Empty user_feedback for adviser {adviser_id} — skipping")
+        return {"status": "skipped", "adviser_id": adviser_id, "reason": "empty feedback"}
+
+    try:
+        logger.info(f"Storing preference for adviser {adviser_id}: '{user_feedback[:80]}'")
+
+        settings = get_settings()
+
+        # ── Step 1: Embed the user_feedback string ────────────────────────
+        from openai import OpenAI
+
+        oai = OpenAI(
+            api_key=settings.openrouter_api_key,
+            base_url=settings.openai_base_url,
+        )
+        embed_resp = oai.embeddings.create(
+            model="openai/text-embedding-3-small",
+            input=user_feedback,
+            encoding_format="float",
+        )
+        embedding_vector = embed_resp.data[0].embedding
+        logger.info(f"Embedded user_feedback ({len(embedding_vector)} dims)")
+
+        # ── Step 2: Ensure collection exists, then upsert ─────────────────
+        from app.db.qdrant_client import ensure_collection, upsert_preference
+
+        ensure_collection(settings)
+
+        point_id = upsert_preference(
+            adviser_id=adviser_id,
+            rule_text=user_feedback,
+            embedding=embedding_vector,
+            org_id=org_id,
+            example_original=original_text,
+            example_edited=chosen_text,
+            settings=settings,
+        )
+
+        logger.info(f"✅ Preference stored: point_id={point_id}")
+
+        return {
+            "status": "completed",
+            "adviser_id": adviser_id,
+            "point_id": point_id,
+            "rule_text": user_feedback,
+        }
+
+    except Exception as e:
+        logger.exception(f"store_preference_task failed for {adviser_id}: {e}")
+        return {"status": "failed", "adviser_id": adviser_id, "error": str(e)}
+
+
+# Legacy aliases so existing callers keep working
+@shared_task(bind=True, name="app.worker.learn_preference")
+def learn_preference_task(self, payload: dict) -> dict:
+    """Legacy alias — routes to store_preference_task."""
+    return store_preference_task(payload)
+
+
+@shared_task(bind=True, name="app.worker.infer_preference")
+def infer_preference_task(self, payload: dict) -> dict:
+    """Legacy alias — routes to store_preference_task."""
+    return store_preference_task(payload)
+
+
+# =============================================================================
+# Dual-Layer Feedback Loop
+# =============================================================================
+
+@shared_task(
+    bind=True,
+    name="app.worker.process_feedback_task",
+    autoretry_for=(sqlalchemy.exc.OperationalError,),
+    retry_kwargs={"max_retries": 3},
+    retry_backoff=True,
+)
+def process_feedback_task(self, payload: dict) -> dict[str, Any]:
+    """Process dual-layer feedback: Stylistic and Procedural."""
+    logger.info(f"Starting feedback processing: {payload.get('adviser_id')}")
+    try:
+        result = run_async(_process_feedback_async(payload))
+        logger.info(f"Successfully processed feedback for {payload.get('adviser_id')}")
+        return result
+    except Exception as e:
+        logger.error(f"Error processing feedback: {e}", exc_info=True)
+        # Re-raise to trigger Celery retry
+        raise
+
+async def _process_feedback_async(payload: dict) -> dict[str, Any]:
+    """Async execution of the dual-layer feedback loop."""
+    from app.core.memory import get_memory_manager
+    from app.db.session import get_session_maker
+    from app.db.models import ProceduralMemory, EpisodicMemory
+    import uuid
+
+    adviser_id = payload.get("adviser_id")
+    client_id = payload.get("client_id")
+    topic = payload.get("topic")
+    stylistic_feedback = payload.get("stylistic_feedback")
+    procedural_corrections = payload.get("procedural_corrections", [])
+
+    results = {"semantic": False, "procedural": 0, "episodic": False}
+
+    # Track A: Semantic Memory
+    if stylistic_feedback:
+        logger.info(f"Processing Semantic Memory for {adviser_id}")
+        mem_manager = await get_memory_manager()
+        try:
+            await mem_manager.add_preference(
+                adviser_id=adviser_id,
+                text=stylistic_feedback,
+                metadata={"topic": topic, "client_id": client_id},
+            )
+            results["semantic"] = True
+        except Exception as e:
+            logger.error(f"Failed to save semantic memory: {e}")
+            # Non-blocking, continue with Track B & C
+
+    # Track B & C: Procedural and Episodic Memory
+    session_maker = get_session_maker()
+    async with session_maker() as session:
+        # Track B: Procedural Memory
+        if procedural_corrections:
+            logger.info(f"Processing Procedural Memory for {adviser_id} ({len(procedural_corrections)} corrections)")
+            for correction in procedural_corrections:
+                proc_entry = ProceduralMemory(
+                    id=uuid.uuid4(),
+                    adviser_id=adviser_id,
+                    variable_name=correction.get("variable_name"),
+                    correction_rule=correction.get("correction_rule"),
+                )
+                session.add(proc_entry)
+            results["procedural"] = len(procedural_corrections)
+
+        # Track C: Episodic Memory
+        logger.info(f"Processing Episodic Memory for {adviser_id}")
+        ep_entry = EpisodicMemory(
+            id=uuid.uuid4(),
+            adviser_id=adviser_id,
+            client_id=client_id,
+            event_type="feedback_captured",
+            event_metadata={
+                "topic": topic,
+                "stylistic_feedback_provided": bool(stylistic_feedback),
+                "procedural_corrections_count": len(procedural_corrections) if procedural_corrections else 0,
+            },
+        )
+        session.add(ep_entry)
+        results["episodic"] = True
+
+        # Commit all DB operations
+        await session.commit()
+
+    return {"status": "success", "results": results}
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Feature 4 — Smart Generation Interception (RAG from Qdrant)
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+@shared_task(bind=True, name="app.worker.generate_personalized_report")
+def generate_personalized_report(
+    self, adviser_id: str, prompt: str, org_id: str = ""
+) -> str:
+    """Generate a report augmented with the adviser's learned preferences.
+
+    RAG pipeline:
+      1. Embed the prompt / topic using text-embedding-3-small.
+      2. Query Qdrant `org_style_preferences` for top-3 rules (filtered by adviser_id).
+      3. Inject retrieved rules into the LLM system prompt.
+      4. Call gpt-4o-mini with the augmented prompt.
+
+    Args:
+        self:       Celery task instance.
+        adviser_id: Adviser for preference lookup.
+        prompt:     The section / topic to generate.
+        org_id:     Organization ID (optional, for logging).
+
+    Returns:
+        Generated report string.
+    """
+    try:
+        logger.info(f"Generating personalized report for adviser {adviser_id}")
+
+        settings = get_settings()
+
+        # ── Step 1: Embed the incoming prompt ─────────────────────────────
+        from openai import OpenAI
+
+        oai = OpenAI(
+            api_key=settings.openrouter_api_key,
+            base_url=settings.openai_base_url,
+        )
+        embed_resp = oai.embeddings.create(
+            model="openai/text-embedding-3-small",
+            input=prompt,
+            encoding_format="float",
+        )
+        prompt_vector = embed_resp.data[0].embedding
+
+        # ── Step 2: Query Qdrant for top 3 style rules ───────────────────
+        from app.db.qdrant_client import query_preferences
+
+        matches = query_preferences(
+            adviser_id=adviser_id,
+            query_embedding=prompt_vector,
+            top_k=3,
+            settings=settings,
+        )
+
+        # Build the rules block for prompt injection
+        rules_lines = []
+        for m in matches:
+            rule = m.get("rule_text", "")
+            if rule:
+                rules_lines.append(f"  - {rule}")
+                logger.info(f"Retrieved preference (score={m.get('score', 0):.3f}): {rule}")
+
+        if rules_lines:
+            rules_block = (
+                "IMPORTANT — Apply these stylistic rules learned from this adviser's "
+                "previous feedback:\n" + "\n".join(rules_lines)
+            )
+        else:
+            rules_block = "No specific style preferences found. Use standard professional tone."
+
+        # ── Step 3: Generate with augmented system prompt ─────────────────
+        system_prompt = (
+            "You are an expert UK financial advisory report writer.\n\n"
+            f"{rules_block}\n\n"
+            "Write in a clear, compliant style following FCA regulations. "
+            "Maintain accuracy and professionalism throughout."
+        )
+
+        gen_resp = oai.chat.completions.create(
+            model="openai/gpt-4o-mini",
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": prompt},
+            ],
+            temperature=0.7,
+            max_tokens=2000,
+        )
+
+        report_content = gen_resp.choices[0].message.content or ""
+        logger.info(
+            f"Generated personalized report for adviser {adviser_id} "
+            f"({len(report_content)} chars, {len(matches)} rules applied)"
+        )
+
+        return report_content
+
+    except Exception as e:
+        logger.exception(
+            f"generate_personalized_report failed for adviser {adviser_id}: {e}"
+        )
+        return f"Error: generation failed — {e}"
 
 
 if __name__ == "__main__":

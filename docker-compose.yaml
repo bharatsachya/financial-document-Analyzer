@@ -45,7 +45,26 @@ services:
       timeout: 5s
       retries: 5
 
+  neo4j:
+    image: neo4j:5
+    container_name: neo4j
+    ports:
+      - "7474:7474"
+      - "7687:7687"
+    environment:
+      - NEO4J_AUTH=${NEO4J_USER}/${NEO4J_PASSWORD}
+      # Install plugins
+      - NEO4J_PLUGINS=${NEO4J_PLUGINS}
+      # Allow APOC procedures
+      - NEO4J_dbms_security_procedures_unrestricted=${NEO4J_PROCEDURES_UNRESTRICTED}
+      - NEO4J_dbms_security_procedures_allowlist=${NEO4J_PROCEDURES_ALLOWLIST}
+    volumes:
+      - neo4j_data:/data
+    restart: unless-stopped
+
 volumes:
   postgres_data:
   qdrant_data:
   redis_data:
+  neo4j_data:
+  neo4j_logs:

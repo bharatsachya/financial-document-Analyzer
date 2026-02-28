@@ -14,7 +14,11 @@ from typing import Any
 
 import httpx
 import streamlit as st
+import streamlit.components.v1 as components
 from streamlit.runtime.uploaded_file_manager import UploadedFile
+
+# Custom components
+d3_carousel_component = components.declare_component("d3_carousel", path="frontend/carousel_component")
 
 # Configuration
 API_BASE_URL = os.getenv("API_BASE_URL", "http://localhost:8000")
@@ -529,6 +533,80 @@ class TemplateAPIClient:
             logger.error(f"Fetch template error: {e}")
             return None
 
+    def get_stored_template_preview(self, template_id: str) -> dict[str, Any] | None:
+        """Get the parsed text preview of a specific stored template.
+
+        Args:
+            template_id: The template ID.
+
+        Returns:
+            Template preview data or None if not found/failed.
+        """
+        url = f"{self.base_url}/templates/stored/{template_id}/preview"
+
+        try:
+            response = httpx.get(url, headers=self.headers, timeout=10.0)
+            response.raise_for_status()
+            return response.json()
+        except httpx.HTTPStatusError as e:
+            if e.response.status_code == 404:
+                return None
+            import logging
+            logging.getLogger(__name__).error(f"Fetch template preview failed: {e.response.status_code}")
+            return None
+        except Exception as e:
+            import logging
+            logging.getLogger(__name__).error(f"Fetch template preview error: {e}")
+            return None
+
+    def get_template_pdf(self, template_id: str) -> bytes | None:
+        """Get the PDF version of a stored template.
+
+        Args:
+            template_id: The template ID.
+
+        Returns:
+            PDF bytes or None if conversion failed.
+        """
+        url = f"{self.base_url}/templates/stored/{template_id}/pdf"
+
+        try:
+            response = httpx.get(url, headers=self.headers, timeout=60.0)
+            response.raise_for_status()
+            return response.content
+        except httpx.HTTPStatusError as e:
+            import logging
+            logging.getLogger(__name__).error(f"Fetch template PDF failed: {e.response.status_code} — {e.response.text}")
+            return None
+        except Exception as e:
+            import logging
+            logging.getLogger(__name__).error(f"Fetch template PDF error: {e}")
+            return None
+
+    def get_draft_versions(self, template_id: str) -> list[dict[str, Any]]:
+        """Get all draft versions for a template."""
+        url = f"{self.base_url}/templates/stored/{template_id}/versions"
+        try:
+            response = httpx.get(url, headers=self.headers, timeout=10.0)
+            response.raise_for_status()
+            return response.json().get("versions", [])
+        except Exception as e:
+            import logging
+            logging.getLogger(__name__).error(f"Fetch draft versions failed: {e}")
+            return []
+            
+    def get_version_pdf(self, version_id: str) -> bytes | None:
+        """Get the PDF version of a specific draft version."""
+        url = f"{self.base_url}/templates/versions/{version_id}/pdf"
+        try:
+            response = httpx.get(url, headers=self.headers, timeout=10.0)
+            response.raise_for_status()
+            return response.content
+        except Exception as e:
+            import logging
+            logging.getLogger(__name__).error(f"Fetch version PDF failed: {e}")
+            return None
+
     def get_template_status(self, template_id: str) -> dict[str, Any] | None:
         """Get status for a specific template.
 
@@ -634,44 +712,129 @@ For each detected variable, suggest a meaningful variable name in snake_case for
         prompt_text: str,
         set_as_default: bool = False,
     ) -> dict[str, Any] | None:
-        """Save a custom extraction prompt.
-
-        Args:
-            name: Name for the prompt.
-            prompt_text: The prompt text content.
-            set_as_default: Whether to set as default prompt.
-
-        Returns:
-            Response dict or None.
-        """
+        """Save a custom extraction prompt."""
         url = f"{self.base_url}/templates/prompts"
-
         payload = {
             "name": name,
             "prompt_text": prompt_text,
             "set_as_default": set_as_default,
         }
-
         try:
             response = httpx.post(url, headers=self.headers, json=payload, timeout=10.0)
             response.raise_for_status()
-            data = response.json()
-            logger.info(f"Prompt saved successfully: {data.get('id')}")
-            return data
+            return response.json()
         except httpx.HTTPStatusError as e:
             error_detail = e.response.text
             try:
                 error_json = e.response.json()
                 error_detail = error_json.get("detail", error_detail)
-            except:
+            except Exception:
                 pass
             logger.error(f"Save prompt failed: {e.response.status_code} - {error_detail}")
             st.error(f"Save prompt failed ({e.response.status_code}): {error_detail}")
         except Exception as e:
             logger.error(f"Save prompt error: {e}", exc_info=True)
             st.error(f"Save prompt error: {e}")
-
         return None
+
+    # =========================================================================
+    # Report Learning API Methods
+    # =========================================================================
+
+    def capture_feedback(
+        self,
+        adviser_id: str,
+        original_text: str,
+        edited_text: str,
+        report_type: str | None = None,
+    ) -> dict[str, Any] | None:
+        """Send feedback (original vs edited text) to learn preferences."""
+        url = f"{self.base_url}/templates/capture-feedback"
+        payload = {
+            "adviser_id": adviser_id,
+            "original_text": original_text,
+            "edited_text": edited_text,
+        }
+        if report_type:
+            payload["report_type"] = report_type
+        try:
+            response = httpx.post(url, headers=self.headers, json=payload, timeout=30.0)
+            response.raise_for_status()
+            return response.json()
+        except httpx.HTTPStatusError as e:
+            logger.error(f"Capture feedback failed: {e.response.status_code}")
+            st.error(f"Feedback capture failed: {e.response.status_code}")
+            return None
+        except Exception as e:
+            logger.error(f"Capture feedback error: {e}")
+            st.error(f"Feedback capture error: {e}")
+            return None
+
+    def get_preferences(self, adviser_id: str) -> dict[str, Any]:
+        """Fetch learned style preferences for Memory Insights."""
+        url = f"{self.base_url}/templates/adviser-preferences/{adviser_id}"
+        try:
+            response = httpx.get(url, headers=self.headers, timeout=10.0)
+            response.raise_for_status()
+            return response.json()
+        except Exception as e:
+            logger.error(f"Get preferences error: {e}")
+            return {"rules": [], "total": 0}
+
+    def generate_report(
+        self,
+        adviser_id: str,
+        prompt: str,
+    ) -> dict[str, Any] | None:
+        """Queue personalized report generation."""
+        url = f"{self.base_url}/templates/generate-personalized-report"
+        payload = {"adviser_id": adviser_id, "prompt": prompt}
+        try:
+            response = httpx.post(url, headers=self.headers, json=payload, timeout=30.0)
+            response.raise_for_status()
+            return response.json()
+        except Exception as e:
+            logger.error(f"Generate report error: {e}")
+            st.error(f"Report generation failed: {e}")
+            return None
+
+    def get_task_result(self, task_id: str) -> dict[str, Any] | None:
+        """Poll Celery task result via Flower or direct."""
+        # For hackathon we poll the backend status endpoint
+        url = f"{self.base_url}/templates/report-status/{task_id}"
+        try:
+            response = httpx.get(url, headers=self.headers, timeout=10.0)
+            if response.status_code == 200:
+                return response.json()
+            return None
+        except Exception:
+            return None
+
+    def generate_draft(self, adviser_id: str, client_id: str, topic: str, template_text: str = None, template_id: str = None) -> dict[str, Any] | None:
+        """Generate a real draft report via the LLM combining factual and procedural data."""
+        url = f"{self.base_url}/templates/generate-draft"
+        payload = {
+            "adviser_id": adviser_id,
+            "client_id": client_id,
+            "topic": topic,
+        }
+        if template_text:
+            payload["template_text"] = template_text
+        if template_id:
+            payload["template_id"] = str(template_id)
+            
+        try:
+            response = httpx.post(url, headers=self.headers, json=payload, timeout=60.0)
+            response.raise_for_status()
+            return response.json()
+        except httpx.HTTPStatusError as e:
+            logger.error(f"Generate draft failed: {e.response.status_code} - {e.response.text}")
+            st.error(f"Generate draft failed: {e.response.status_code}")
+            return None
+        except Exception as e:
+            logger.error(f"Generate draft error: {e}")
+            st.error(f"Generate draft error: {e}")
+            return None
 
 
 # =============================================================================
@@ -1142,599 +1305,6 @@ def render_template_finalize(
     return st.session_state.get("show_template_download", False)
 
 
-def render_document_selector(client: TemplateAPIClient) -> tuple[dict[str, Any], list[dict[str, Any]]] | None:
-    """Render document selection UI for inject phase.
-
-    Shows available DOCX documents. When clicked, displays detected variables
-    with context snippets for easy replacement.
-
-    Returns:
-        Tuple of (selected_document, edited_variables) or None.
-    """
-    st.subheader("📂 Select Document for Variable Injection")
-
-    # Fetch available DOCX documents
-    with st.spinner("Loading documents..."):
-        documents = client.get_docx_documents()
-
-    # Debug info
-    if documents:
-        st.info(f"Debug: Found {len(documents)} documents")
-        for doc in documents:
-            st.caption(f"  - {doc.get('filename')}: id={str(doc.get('id'))}")
-
-    if not documents:
-        st.info("No DOCX documents available. Upload a document first.")
-        return None
-
-    # Display document grid
-    st.info(f"Found {len(documents)} DOCX documents. Click to analyze variables.")
-
-    # Create grid of document cards
-    num_cols = min(3, len(documents))
-    cols = st.columns(num_cols)
-
-    for i, doc in enumerate(documents):
-        with cols[i % num_cols]:
-            filename = doc.get("filename", "unknown")
-            doc_id = str(doc.get("id", ""))  # Convert UUID to string
-            status = doc.get("status", "unknown")
-
-            # Status badge
-            status_emoji = {
-                "completed": "✅",
-                "failed": "❌",
-                "processing": "🔄",
-            }.get(status.lower(), "📄")
-
-            # Document card
-            if st.button(
-                f"{status_emoji} {filename[:30]}...",
-                key=f"select_doc_{doc_id}_{i}",  # Add index to ensure uniqueness
-                use_container_width=True,
-            ):
-                # Store selected document
-                st.session_state.selected_doc_for_inject = doc
-                st.rerun()
-
-    # If document selected, show inject engine
-    selected_doc = st.session_state.get("selected_doc_for_inject")
-    if selected_doc:
-        return render_inject_engine(client, selected_doc)
-
-    return None
-
-
-def render_inject_engine(client: TemplateAPIClient, doc_data: dict[str, Any]) -> tuple[dict[str, Any], list[dict[str, Any]]]:
-    """Render the inject engine popup with variables and context.
-
-    Args:
-        client: API client instance.
-        doc_data: Selected document data.
-
-    Returns:
-        Tuple of (document, variables_with_context).
-    """
-    # Header with back button
-    col1, col2 = st.columns([4, 1])
-    with col1:
-        st.markdown(f"### 📄 {doc_data.get('filename', 'Document')}")
-        st.markdown(f"*Status: {doc_data.get('status', 'unknown')}*")
-    with col2:
-        if st.button("← Back", use_container_width=True):
-            st.session_state.selected_doc_for_inject = None
-            st.rerun()
-
-    st.divider()
-
-    st.info("""
-    **Variable Injection Workflow**
-
-    This document has already been ingested. To inject variables:
-
-    1. **Upload** the DOCX file to analyze for variables
-    2. **Review** detected variables with context snippets
-    3. **Provide** replacement values
-    4. **Generate** the output document
-
-    💡 *Note: For existing documents, you can re-upload the file to create a dynamic template.*
-    """)
-
-    st.divider()
-
-    # File upload for analysis
-    col1, col2 = st.columns([3, 1])
-
-    with col1:
-        uploaded_file = st.file_uploader(
-            "Upload the DOCX file to analyze for variables",
-            type=["docx"],
-            key="inject_engine_upload",
-        )
-
-    with col2:
-        st.write("")
-        if uploaded_file and st.button("🔍 Analyze", type="primary", use_container_width=True):
-            result = client.analyze_template(uploaded_file)
-            if result:
-                st.session_state.inject_analysis_result = result
-                st.session_state.inject_uploaded_file = uploaded_file
-                st.rerun()
-
-    # Show analysis results if available
-    if st.session_state.get("inject_analysis_result"):
-        result = st.session_state.inject_analysis_result
-
-        st.success(f"✅ **Analysis complete!** Found {len(result.get('detected_variables', []))} variables.")
-
-        # Show variables with context
-        variables = result.get("detected_variables", [])
-        edited_vars = []
-
-        for i, var in enumerate(variables):
-            var_name = var.get("suggested_variable_name", "")
-            original_text = var.get("original_text", "")
-            paragraph_index = var.get("paragraph_index", 0)
-
-            with st.expander(f"📝 {var_name.replace('_', ' ').title()}", expanded=i < 3):
-                col1, col2 = st.columns([2, 1])
-
-                with col1:
-                    # Input field for replacement value
-                    new_value = st.text_input(
-                        "Replacement Value",
-                        key=f"inject_value_{i}",
-                        help="Enter the value to replace this variable",
-                    )
-
-                    # Keep checkbox
-                    keep = st.checkbox("Include in injection", value=True, key=f"inject_keep_{i}")
-
-                with col2:
-                    st.write("**Detected:**")
-                    st.code(original_text, language="text")
-                    st.caption(f"Paragraph {paragraph_index}")
-
-                # Context snippet
-                st.info(f"📍 **Context:** \"...{original_text}...\"")
-                st.caption("_The context shows where this value appears in the document._")
-
-                if keep and new_value:
-                    edited_vars.append({
-                        "original_text": original_text,
-                        "suggested_variable_name": var_name,
-                        "replacement_value": new_value,
-                        "paragraph_index": paragraph_index,
-                    })
-
-        # Generate output button
-        if edited_vars:
-            st.divider()
-            col1, col2 = st.columns(2)
-
-            with col1:
-                if st.button("🎯 Generate Output Document", type="primary", use_container_width=True):
-                    st.success(f"✅ Would generate document with {len(edited_vars)} replacements")
-                    st.info("💾 Document generation feature coming soon!")
-
-            with col2:
-                if st.button("❌ Cancel", use_container_width=True):
-                    st.session_state.inject_analysis_result = None
-                    st.session_state.inject_uploaded_file = None
-                    st.rerun()
-
-    return doc_data, []
-
-
-def render_stored_template_selector(client: TemplateAPIClient) -> None:
-    """Render stored template selection UI for inject phase.
-
-    Shows stored templates. When clicked, displays detected variables
-    with context snippets for easy replacement.
-
-    Args:
-        client: The API client instance.
-    """
-    st.subheader("📂 Select Stored Template for Variable Injection")
-
-    # Fetch stored templates
-    with st.spinner("Loading stored templates..."):
-        templates = client.get_stored_templates()
-
-    if not templates:
-        st.info("""
-        **No stored templates available.**
-
-        To create a stored template:
-        1. Switch to "Upload New Template" mode
-        2. Upload and analyze a Word document
-        3. Click "Save Template" after reviewing variables
-        """)
-        return
-
-    # Display template grid
-    st.info(f"Found {len(templates)} stored templates. Click to inject variables.")
-
-    # Create grid of template cards
-    num_cols = min(3, len(templates))
-    cols = st.columns(num_cols)
-
-    for i, tmpl in enumerate(templates):
-        with cols[i % num_cols]:
-            name = tmpl.get("name", "unknown")
-            filename = tmpl.get("original_filename", "")
-            desc = tmpl.get("description", "")
-            # Handle None case for detected_variables
-            detected_vars = tmpl.get("detected_variables") or {}
-            var_count = detected_vars.get("count", 0)
-            is_tagged = tmpl.get("is_tagged", False)
-            created_at = tmpl.get("created_at", "")
-
-            # Status badge
-            status_emoji = "✅" if is_tagged else "📝"
-
-            # Template card
-            if st.button(
-                f"{status_emoji} {name[:25]}",
-                key=f"select_tmpl_{tmpl.get('id')}_{i}",
-                use_container_width=True,
-                help=f"{filename}\n{var_count} variables\nCreated: {created_at[:10]}",
-            ):
-                st.session_state.selected_template = tmpl
-                st.rerun()
-
-    # If template selected, show inject engine
-    selected_template = st.session_state.get("selected_template")
-    if selected_template:
-        render_stored_template_inject(client, selected_template)
-
-
-def generate_random_values(variables: list[dict]) -> dict[str, str]:
-    """Generate random UK-specific values based on variable name patterns."""
-    import random
-    import string
-    from datetime import datetime, timedelta
-
-    # Personal Data
-    first_names = ["John", "Jane", "James", "Sarah", "Michael", "Emma", "David", "Emily", "Robert", "Olivia"]
-    last_names = ["Smith", "Jones", "Williams", "Brown", "Taylor", "Davies", "Wilson", "Evans", "Thomas", "Johnson"]
-
-    # Address Data
-    streets = ["High Street", "Church Road", "Queen's Road", "Park Avenue", "King Street", "Market Street", "London Road", "Victoria Road"]
-    cities = ["London", "Manchester", "Birmingham", "Leeds", "Glasgow", "Bristol", "Liverpool", "Sheffield", "Edinburgh", "Cardiff"]
-    uk_postcodes = ["SW1A 1AA", "M1 1AA", "B1 1AA", "LS1 1AA", "G1 1AA", "BS1 1AA", "L1 1AA", "S1 1AA", "EH1 1AA", "CF1 1AA"]
-
-    # Financial Data (UK)
-    tax_codes = ["1257L", "1256L", "1250L", "1185L", "BR", "D0", "D1", "0T", "NT"]
-
-    # Business Data (UK)
-    company_suffixes = ["Ltd", "Limited", "PLC", "LLP"]
-    company_prefixes = ["British", "United", "National", "Capital", "Premier", "Atlantic", "Pacific", "Global", "First", "Prime"]
-    company_industries = ["Financial Services", "Investments", "Holdings", "Solutions", "Consulting", "Partners", "Group", "Associates", "Securities", "Wealth Management"]
-
-    random_values = {}
-    for var in variables:
-        var_name = var.get("suggested_variable_name", "")
-        var_lower = var_name.lower()
-
-        # Sort Code (XX-XX-XX format)
-        if "sort_code" in var_lower or "sortcode" in var_lower:
-            random_values[var_name] = f"{random.randint(10, 99):02d}-{random.randint(10, 99):02d}-{random.randint(10, 99):02d}"
-
-        # Bank Account Number (8 digits)
-        elif "account_number" in var_lower or "accountnumber" in var_lower:
-            random_values[var_name] = f"{random.randint(10000000, 99999999)}"
-
-        # Tax Code
-        elif "tax_code" in var_lower or "taxcode" in var_lower:
-            random_values[var_name] = random.choice(tax_codes)
-
-        # National Insurance Number (XX 00 00 00 X)
-        elif "ni_number" in var_lower or "nino" in var_lower or "national_insurance" in var_lower:
-            prefix = random.choice(["AB", "AC", "AD", "AE", "AH", "AJ", "AK", "AL", "AM", "AN"])
-            suffix = random.choice(["A", "B", "C", "D"])
-            random_values[var_name] = f"{prefix} {random.randint(10, 99):02d} {random.randint(10, 99):02d} {random.randint(10, 99):02d} {suffix}"
-
-        # VAT Number (GBXXX XXXXXX)
-        elif "vat" in var_lower:
-            random_values[var_name] = f"GB{random.randint(100, 999):03d} {random.randint(100000, 999999):06d}"
-
-        # Company Registration Number (8 digits)
-        elif "crn" in var_lower or "registration_number" in var_lower or "companies_house" in var_lower:
-            random_values[var_name] = f"{random.randint(10000000, 99999999)}"
-
-        # Company Name
-        elif "company_name" in var_lower or "company" in var_lower:
-            prefix = random.choice(company_prefixes)
-            industry = random.choice(company_industries)
-            suffix = random.choice(company_suffixes)
-            random_values[var_name] = f"{prefix} {industry} {suffix}"
-
-        # Reference Number (alphanumeric)
-        elif "reference" in var_lower or "ref" in var_lower:
-            chars = string.ascii_uppercase + string.digits
-            ref = ''.join(random.choices(chars, k=8))
-            random_values[var_name] = f"REF-{ref}"
-
-        # Pension Value
-        elif "pension" in var_lower:
-            amount = random.randint(50000, 2000000)
-            random_values[var_name] = f"£{amount:,.2f}"
-
-        # Names (must come after more specific patterns to avoid false matches)
-        elif "name" in var_lower or "client" in var_lower:
-            if "first" in var_lower or "forename" in var_lower:
-                random_values[var_name] = random.choice(first_names)
-            elif "last" in var_lower or "surname" in var_lower:
-                random_values[var_name] = random.choice(last_names)
-            else:
-                random_values[var_name] = f"{random.choice(first_names)} {random.choice(last_names)}"
-
-        # Date
-        elif "date" in var_lower:
-            rand_date = datetime.now() + timedelta(days=random.randint(-365, 365))
-            random_values[var_name] = rand_date.strftime("%d/%m/%Y")
-
-        # Monetary Amount / Balance
-        elif "amount" in var_lower or "monetary" in var_lower or "balance" in var_lower:
-            amount = random.randint(1000, 500000)
-            random_values[var_name] = f"£{amount:,.2f}"
-
-        # Percentage / Rate (must come after pension_rate, tax_rate checks above)
-        elif "percentage" in var_lower or "percent" in var_lower:
-            random_values[var_name] = f"{random.randint(1, 100)}%"
-
-        # Address
-        elif "address" in var_lower:
-            house_num = random.randint(1, 999)
-            street = random.choice(streets)
-            city = random.choice(cities)
-            postcode = random.choice(uk_postcodes)
-            random_values[var_name] = f"{house_num} {street}, {city}, {postcode}"
-
-        # Email
-        elif "email" in var_lower:
-            name = random.choice(first_names).lower()
-            domain = random.choice(["gmail.com", "yahoo.com", "outlook.com", "hotmail.com"])
-            random_values[var_name] = f"{name}.{random.choice(last_names).lower()}@{domain}"
-
-        # Phone / Telephone
-        elif "phone" in var_lower or "telephone" in var_lower:
-            random_values[var_name] = f"+44 {random.randint(1000, 9999)} {random.randint(100000, 999999)}"
-
-        # Passport Number (9 digits)
-        elif "passport" in var_lower:
-            random_values[var_name] = f"{random.randint(100000000, 999999999)}"
-
-        # Driving License Number (UK format)
-        elif "driving_license" in var_lower or "drivinglicence" in var_lower:
-            # UK driving license format: 5 chars + number + 2 chars + number
-            surname = random.choice(last_names)[:5].upper().ljust(5, '9')
-            random_values[var_name] = f"{surname}{random.choice(['M', 'F'])}{random.randint(100, 999):03d}{random.randint(10, 99):02d}{random.choice(['A', 'B', 'C'])}{random.randint(1, 9)}"
-
-        # Fallback - use variable name as placeholder
-        else:
-            random_values[var_name] = f"[{var_name}]"
-
-    return random_values
-
-
-def render_stored_template_inject(client: TemplateAPIClient, tmpl: dict[str, Any]) -> None:
-    """Render the inject engine for a stored template.
-
-    Args:
-        client: API client instance.
-        tmpl: Selected template data.
-    """
-    # Header with back button
-    col1, col2 = st.columns([4, 1])
-    with col1:
-        st.markdown(f"### 📝 {tmpl.get('name', 'Template')}")
-        st.markdown(f"*{tmpl.get('description', 'No description')}*")
-        # Handle None case for detected_variables
-        detected_vars = tmpl.get('detected_variables') or {}
-        st.caption(f"Original: `{tmpl.get('original_filename')}` | {detected_vars.get('count', 0)} variables")
-    with col2:
-        if st.button("← Back", use_container_width=True):
-            st.session_state.selected_template = None
-            st.rerun()
-
-    st.divider()
-
-    # Fetch current template status from API for real-time updates
-    template_id = tmpl.get("id")
-    if template_id:
-        current_status = client.get_template_status(template_id)
-        if current_status:
-            # Update the display with fresh status
-            template_status = current_status.get("status", "")
-            injection_status = current_status.get("injection_status", "")
-
-            if template_status == "FINALIZING" or injection_status in ["queued", "processing"]:
-                # Show simple progress with spinner
-                if injection_status == "queued":
-                    st.info("⏳ Queued for processing...")
-                    st.progress(0.2)
-                elif injection_status == "processing":
-                    st.info("⚙️ Processing template injection...")
-                    st.progress(0.6)
-                elif template_status == "FINALIZING":
-                    st.info("🔄 Finalizing content...")
-                    st.progress(0.4)
-                else:
-                    st.info("🔄 Initializing...")
-                    st.progress(0.1)
-
-                # Auto-refresh with spinner
-                with st.spinner("Waiting for update..."):
-                    import time
-                    time.sleep(3)
-                st.rerun()
-            elif template_status == "COMPLETED" and current_status.get("download_ready"):
-                st.success("✅ Processing Complete!")
-                st.progress(1.0)
-                st.caption("Template is ready for download!")
-
-                # Show download button
-                download_url = current_status.get("download_url")
-                if download_url:
-                    # Create a proper download link with org_id query parameter (browser downloads can't send custom headers)
-                    full_url = f"{client.base_url}{download_url}?org_id={client.org_id}"
-                    st.markdown(
-                        f"### 📥 Download Ready\n"
-                        f"Click the link below to download your filled document:\n\n"
-                        f"[📥 Download {tmpl.get('original_filename')}]({full_url})"
-                    )
-
-                # Show clear button
-                if st.button("← Back to Templates", use_container_width=True):
-                    st.session_state.selected_template = None
-                    st.rerun()
-                return  # Exit early to show only the download option
-
-    st.divider()
-
-    # Get variables from stored template (handle None case)
-    variables_data = tmpl.get("detected_variables") or {}
-    variables = variables_data.get("variables", [])
-
-    if not variables:
-        st.warning("No variables found in this template.")
-        return
-
-    st.success(f"✅ **Template loaded!** Found {len(variables)} variables.")
-
-    st.info("""
-    **Variable Injection Workflow**
-
-    Enter replacement values for each variable below. When ready,
-    click "Generate Document" to create the output.
-    """)
-
-    st.divider()
-
-    # Random Fill Logic - Use template-specific storage to avoid conflicts
-    random_values_key = f"random_values_{tmpl.get('id')}"
-
-    # Use a generation counter to force widget recreation when values change
-    gen_count_key = f"gen_count_{tmpl.get('id')}"
-    if gen_count_key not in st.session_state:
-        st.session_state[gen_count_key] = 0
-
-    # Auto-generate random values on first load (if not already generated)
-    if random_values_key not in st.session_state or not st.session_state[random_values_key]:
-        st.session_state[random_values_key] = generate_random_values(variables)
-        st.session_state[gen_count_key] = 1  # First generation
-        # Debug: Show what was generated
-        with st.expander("🔍 Debug: Generated Random Values", expanded=False):
-            st.json(st.session_state[random_values_key])
-
-    col_btn1, col_btn2, col_btn3 = st.columns([1, 1, 2])
-    with col_btn1:
-        if st.button("🔄 Regenerate", use_container_width=True, key=f"random_fill_btn_{tmpl.get('id')}"):
-            # Generate and store random values for this template
-            st.session_state[random_values_key] = generate_random_values(variables)
-            # Increment generation counter to force widget recreation
-            st.session_state[gen_count_key] += 1
-            st.rerun()
-
-    with col_btn2:
-        # Clear button to remove random values
-        if st.button("🗑️ Clear", use_container_width=True, key=f"clear_btn_{tmpl.get('id')}"):
-            st.session_state[random_values_key] = {}
-            # Increment generation counter to force widget recreation
-            st.session_state[gen_count_key] += 1
-            st.rerun()
-
-    st.divider()
-
-    # Show variables with context - OUTSIDE of form for dynamic updates
-    # Track which variables to include in injection
-    include_vars_key = f"include_vars_{tmpl.get('id')}"
-    if include_vars_key not in st.session_state:
-        # Initialize all as included
-        st.session_state[include_vars_key] = {var.get("suggested_variable_name", ""): True for var in variables}
-
-    # Get current generation count for widget keys
-    gen_count = st.session_state.get(gen_count_key, 0)
-
-    # Display all variables
-    for i, var in enumerate(variables):
-        var_name = var.get("suggested_variable_name", "")
-        original_text = var.get("original_text", "")
-        paragraph_index = var.get("paragraph_index", 0)
-
-        with st.expander(f"📝 {var_name.replace('_', ' ').title()}", expanded=i < 3):
-            col1, col2 = st.columns([2, 1])
-
-            with col1:
-                # Input field for replacement value - get from random values
-                random_values = st.session_state.get(random_values_key, {})
-                default_val = random_values.get(var_name, "")
-
-                # Debug for first 3 variables
-                if i < 3:
-                    st.caption(f"🔍 Debug: var_name='{var_name}', default_val='{default_val}'")
-
-                # Widget key includes generation count to force recreation when regenerated
-                widget_key = f"stored_inject_value_{i}_{tmpl.get('id')}_gen{gen_count}"
-
-                new_value = st.text_input(
-                    "Replacement Value",
-                    value=default_val,
-                    key=widget_key,
-                    help="Enter the value to replace this variable",
-                )
-
-                # Keep checkbox - also use generation count for consistency
-                keep_key = f"stored_inject_keep_{i}_{tmpl.get('id')}_gen{gen_count}"
-                keep = st.checkbox("Include in injection", value=st.session_state[include_vars_key].get(var_name, True), key=keep_key)
-                # Update include state
-                st.session_state[include_vars_key][var_name] = keep
-
-            with col2:
-                st.write("**Detected:**")
-                st.code(original_text, language="text")
-                st.write("**Paragraph:**", paragraph_index)
-
-    st.divider()
-
-    # Form for submit button only
-    with st.form(key=f"submit_form_{tmpl.get('id')}"):
-        submit = st.form_submit_button("🚀 Inject & Process", type="primary", use_container_width=True)
-
-    if submit:
-        # Collect values from widgets using current generation count
-        edited_vars = []
-        for i, var in enumerate(variables):
-            var_name = var.get("suggested_variable_name", "")
-            original_text = var.get("original_text", "")
-            paragraph_index = var.get("paragraph_index", 0)
-
-            # Check if this variable is included
-            if st.session_state[include_vars_key].get(var_name, True):
-                widget_key = f"stored_inject_value_{i}_{tmpl.get('id')}_gen{gen_count}"
-                value = st.session_state.get(widget_key, "")
-                edited_vars.append({
-                    "variable_name": var_name,
-                    "replacement_value": value,
-                    "original_text": original_text,
-                    "paragraph_index": paragraph_index
-                })
-
-        if not edited_vars:
-            st.warning("No variables selected for injection.")
-        else:
-            task_id = client.finalize_template_async(tmpl.get("id"), edited_vars)
-            if task_id:
-                st.success(f"✅ Injection queued! Task ID: `{task_id}`")
-                st.info("Check the 'processing' status tab or Download Center for results.")
-                # Clear random values and reset state
-                st.session_state[random_values_key] = {}
-                st.session_state.selected_template = None
-                st.rerun()
-
-
 def render_injection_queue_dashboard(client: TemplateAPIClient) -> None:
     """Render the injection queue status dashboard."""
     st.subheader("📊 Injection Queue Status")
@@ -1943,6 +1513,463 @@ Analyze the user input. Return valid JSON only."""
                 st.rerun()
 
 
+# =============================================================================
+# Report Review & Learn UI
+# =============================================================================
+
+
+SAMPLE_REPORT = """Dear Mr. and Mrs. Henderson,
+
+Following our recent meeting on 15th January 2025, I am pleased to present your Annual Portfolio Review for the period ending 31st December 2024.
+
+Portfolio Performance Summary:
+Your portfolio has achieved a total return of 8.2% over the review period, compared to the benchmark return of 7.1%. The portfolio value currently stands at £485,000, representing a net increase of £36,770.
+
+Asset Allocation:
+- UK Equities: 35% (£169,750) — Overweight vs. target of 30%
+- Global Equities: 25% (£121,250) — In line with target
+- Fixed Income: 20% (£97,000) — Underweight vs. target of 25%
+- Property: 10% (£48,500) — In line with target
+- Cash: 10% (£48,500) — Overweight vs. target of 5%
+
+Risk Assessment:
+Based on your completed risk questionnaire (score: 6/10), we classify your risk profile as "Balanced Growth". This remains appropriate given your stated investment horizon of 15+ years and your objective of funding retirement at age 65.
+
+Recommendations:
+1. Rebalance UK equities to target allocation, taking profits of approximately £24,250
+2. Increase fixed income allocation by £24,250 to provide greater portfolio stability
+3. Reduce cash holdings to 5%, deploying £24,250 into global equity markets
+4. Consider adding emerging market exposure (5%) for diversification benefits
+
+These recommendations are subject to market conditions and your ongoing agreement. Past performance is not a guarantee of future returns. The value of investments can go down as well as up.
+
+Kind regards,
+Financial Advisory Team"""
+
+
+def render_review_and_learn(client: TemplateAPIClient) -> None:
+    """Render the Report Review & Learn interface.
+
+    This is where the RLHF training signal is captured:
+    1. Display AI-generated report text
+    2. User edits text to match their preferred style
+    3. Diff is captured and sent to learn_preference_task
+    4. Memory Insights shows what rules have been learned
+    """
+    st.subheader("🧠 Report Review & Style Learning")
+    st.markdown(
+        "Edit the sample report below to match your preferred style. "
+        "Your edits teach the system your formatting and tone preferences."
+    )
+
+    # Initialize session state for review
+    if "review_original" not in st.session_state:
+        st.session_state.review_original = SAMPLE_REPORT
+    if "review_submitted" not in st.session_state:
+        st.session_state.review_submitted = False
+    if "review_adviser_id" not in st.session_state:
+        st.session_state.review_adviser_id = "adv_001"
+
+    # Adviser selector
+    col_adviser, col_reset = st.columns([3, 1])
+    with col_adviser:
+        adviser = st.selectbox(
+            "Acting as Adviser",
+            ["adv_001 — Sarah Mitchell", "adv_002 — James Crawford"],
+            key="adviser_selector",
+        )
+        adviser_id = adviser.split(" — ")[0]
+        st.session_state.review_adviser_id = adviser_id
+    with col_reset:
+        st.write("")
+        st.write("")
+        if st.button("🔄 Reset", use_container_width=True):
+            st.session_state.review_original = SAMPLE_REPORT
+            st.session_state.review_submitted = False
+            st.rerun()
+
+    st.divider()
+
+    # Two-tab layout: Edit | Diff + Learn
+    tab_edit, tab_learn = st.tabs(["✏️ Edit Report", "📊 Diff & Learn"])
+
+    with tab_edit:
+        st.markdown("**Edit the report text below** — change tone, formatting, terminology, structure:")
+
+        edited_text = st.text_area(
+            "Report Text",
+            value=st.session_state.review_original,
+            height=500,
+            label_visibility="collapsed",
+            key="report_editor",
+        )
+
+        col_submit, col_info = st.columns([1, 3])
+        with col_submit:
+            if st.button("📝 Submit Edits", type="primary", use_container_width=True):
+                if edited_text.strip() != st.session_state.review_original.strip():
+                    st.session_state.review_edited = edited_text
+                    st.session_state.review_submitted = True
+                    st.success("✅ Edits captured! Switch to **Diff & Learn** tab to review and approve.")
+                else:
+                    st.warning("No changes detected. Please edit the text first.")
+        with col_info:
+            st.caption(
+                "💡 Try changing tone (formal ↔ casual), replacing jargon, "
+                "restructuring paragraphs, or adjusting number formatting."
+            )
+
+    with tab_learn:
+        if not st.session_state.review_submitted:
+            st.info("✏️ Edit the report in the **Edit Report** tab first, then submit your changes.")
+        else:
+            original = st.session_state.review_original
+            edited = st.session_state.get("review_edited", original)
+
+            # Show diff
+            st.markdown("### Changes Detected")
+
+            # Simple line-by-line diff visualization
+            import difflib
+
+            original_lines = original.splitlines()
+            edited_lines = edited.splitlines()
+
+            diff = list(difflib.unified_diff(
+                original_lines, edited_lines,
+                fromfile="Original (AI)", tofile="Your Edits",
+                lineterm="",
+            ))
+
+            if diff:
+                diff_text = "\n".join(diff)
+                st.code(diff_text, language="diff")
+
+                changes_count = sum(1 for line in diff if line.startswith("+") and not line.startswith("+++"))
+                st.metric("Lines Changed", changes_count)
+            else:
+                st.success("No differences found.")
+
+            st.divider()
+
+            # Approve & Learn button
+            col_approve, col_info2 = st.columns([1, 2])
+            with col_approve:
+                if st.button(
+                    "🧠 Approve & Learn",
+                    type="primary",
+                    use_container_width=True,
+                    help="Send your edits to the AI to learn your style preferences",
+                ):
+                    with st.spinner("Sending feedback to learning pipeline..."):
+                        result = client.capture_feedback(
+                            adviser_id=st.session_state.review_adviser_id,
+                            original_text=original,
+                            edited_text=edited,
+                            report_type="portfolio_review",
+                        )
+                        if result:
+                            st.success(
+                                f"✅ **Feedback captured!** Task `{result.get('task_id', 'N/A')}` queued.\n\n"
+                                f"The system is now extracting your style preferences and storing them. "
+                                f"Future template analyses for your organization will reflect these preferences."
+                            )
+                            st.balloons()
+                        else:
+                            st.error("Failed to send feedback. Check API connection.")
+            with col_info2:
+                st.caption(
+                    "This sends your original and edited text to the learning pipeline. "
+                    "An LLM will extract the stylistic rules you applied, embed them, "
+                    "and store them in Qdrant for future template analyses."
+                )
+
+    # Memory Insights Panel
+    st.divider()
+    with st.expander("🧠 Memory Insights — Learned Style Preferences", expanded=False):
+        prefs = client.get_preferences(st.session_state.review_adviser_id)
+        rules = prefs.get("rules", [])
+        total = prefs.get("total", 0)
+
+        if total > 0:
+            st.metric("Total Learned Rules", total)
+
+            for i, rule in enumerate(rules):
+                rule_text = rule.get("rule_text", "Unknown rule")
+                created = rule.get("created_at", "")[:19]
+                adviser = rule.get("adviser_id", "")
+
+                st.markdown(
+                    f"**Rule {i+1}:** {rule_text}\n\n"
+                    f"*Learned from: {adviser} • {created}*"
+                )
+                if i < len(rules) - 1:
+                    st.divider()
+        else:
+            st.info(
+                "No style preferences learned yet for this organization. "
+                "Use the **Edit Report** tab to make edits and click **Approve & Learn** "
+                "to teach the system your preferred style."
+            )
+
+
+def render_director_typist_ui(client: TemplateAPIClient) -> None:
+    """Render the Report Review & Learn interface with Director-Typist UI."""
+    st.subheader("🧠 Report Review & Style Learning (Director-Typist)")
+    
+    # Session state init
+    if "dt_report_text" not in st.session_state:
+        st.session_state.dt_report_text = ""
+    if "dt_ai_variables" not in st.session_state:
+        st.session_state.dt_ai_variables = {}
+    if "dt_user_variables" not in st.session_state:
+        st.session_state.dt_user_variables = {}
+    if "dt_stylistic_feedback" not in st.session_state:
+        st.session_state.dt_stylistic_feedback = ""
+    if "dt_draft_generated" not in st.session_state:
+        st.session_state.dt_draft_generated = False
+
+    # Adviser selector
+    col_adviser, col_client, col_topic = st.columns(3)
+    with col_adviser:
+        adviser = st.selectbox(
+            "Acting as Adviser",
+            ["adv_001 — Sarah Mitchell", "adv_002 — James Crawford"],
+            key="dt_adviser_selector",
+        )
+        adviser_id = adviser.split(" — ")[0]
+    with col_client:
+        client_id_input = st.text_input("Client ID", value="client_001", key="dt_client_id")
+    with col_topic:
+        topic_input = st.text_input("Topic", value="Annual Portfolio Review", key="dt_topic")
+
+    st.markdown("### 📝 Select Template")
+    
+    # Fetch actual DOCX records present in PostgreSQL via our TemplateStorage queries
+    templates = client.get_stored_templates()
+    template_id = None
+    
+    if templates:
+        # Create a mapping of template name -> ID
+        template_options = {t["name"]: t["id"] for t in templates}
+        selected_template_name = st.selectbox(
+            "Select an uploaded template to review",
+            list(template_options.keys()),
+            key="dt_template_selector",
+        )
+        template_id = template_options[selected_template_name]
+    else:
+        st.warning("No templates found in the database. Please upload one first (Batch Upload).")
+        return
+
+    st.divider()
+
+    # ── Full Document Preview + Feedback ──────────────────────────────────────
+    
+    col_doc, col_feedback = st.columns([7, 3])
+    
+    with col_doc:
+        st.markdown("### 📄 Document Preview")
+        
+        # Check for versions
+        versions = client.get_draft_versions(template_id)
+        active_version_id = st.session_state.get(f"active_version_{template_id}")
+        
+        if versions:
+            # Sort descending by version number
+            versions = sorted(versions, key=lambda x: x["version_number"], reverse=True)
+            if not active_version_id:
+                active_version_id = versions[0]["id"]
+                st.session_state[f"active_version_{template_id}"] = active_version_id
+                
+            selected_id = d3_carousel_component(
+                versions=versions,
+                selected_id=active_version_id,
+                api_base_url=client.base_url,
+                key=f"d3_carousel_{template_id}_{len(versions)}"
+            )
+            
+            if selected_id and selected_id != active_version_id:
+                st.session_state[f"active_version_{template_id}"] = selected_id
+                st.rerun()
+                
+            pdf_bytes = client.get_version_pdf(st.session_state[f"active_version_{template_id}"])
+        else:
+            # Fallback to the original template PDF if no generated drafts exist yet
+            pdf_bytes = client.get_template_pdf(template_id)
+        
+        if pdf_bytes:
+            import base64
+            b64_pdf = base64.b64encode(pdf_bytes).decode("utf-8")
+            pdf_display = (
+                f'<iframe src="data:application/pdf;base64,{b64_pdf}" '
+                f'width="100%" height="650" type="application/pdf" '
+                f'style="border: 1px solid #333; border-radius: 10px; margin-top: 15px;">'
+                f'</iframe>'
+            )
+            st.markdown(pdf_display, unsafe_allow_html=True)
+        else:
+            # Fallback to the rich HTML preview if PDF conversion isn't available
+            if versions and active_version_id:
+                active_version = next((v for v in versions if v["id"] == active_version_id), None)
+                if active_version and "generated_text" in active_version:
+                    st.markdown(
+                        f'<div style="background:#1a1a2e; padding:24px 28px; border-radius:12px; '
+                        f'border:1px solid #333; font-size:14px; line-height:1.8; '
+                        f'color:#e0e0e0; font-family: Georgia, serif; '
+                        f'max-height:600px; overflow-y:auto; '
+                        f'box-shadow: 0 4px 12px rgba(0,0,0,0.3); white-space: pre-wrap;">'
+                        f'{active_version["generated_text"]}'
+                        f'</div>',
+                        unsafe_allow_html=True,
+                    )
+                else:
+                    st.warning("⚠️ Could not load document preview for this version.")
+            else:
+                preview_data = client.get_stored_template_preview(template_id)
+                if preview_data and "template_text" in preview_data:
+                    st.markdown(
+                        f'<div style="background:#1a1a2e; padding:24px 28px; border-radius:12px; '
+                        f'border:1px solid #333; font-size:14px; line-height:1.8; '
+                        f'color:#e0e0e0; font-family: Georgia, serif; '
+                        f'max-height:600px; overflow-y:auto; '
+                        f'box-shadow: 0 4px 12px rgba(0,0,0,0.3); white-space: pre-wrap;">'
+                        f'{preview_data["template_text"]}'
+                        f'</div>',
+                        unsafe_allow_html=True,
+                    )
+                else:
+                    st.warning("⚠️ Could not load document preview. Ensure MS Word or LibreOffice is installed for PDF conversion.")
+    
+    with col_feedback:
+        st.markdown("### 🗣️ Feedback")
+        st.caption("Review the document and provide your feedback before generating.")
+        
+        # Stylistic Feedback
+        stylistic_fb = st.text_area(
+            "Style & Tone Feedback",
+            value=st.session_state.dt_stylistic_feedback,
+            height=150,
+            placeholder="e.g. Make the tone more formal, use shorter paragraphs, avoid jargon...",
+            key="dt_preview_style_feedback",
+        )
+        if stylistic_fb != st.session_state.dt_stylistic_feedback:
+            st.session_state.dt_stylistic_feedback = stylistic_fb
+        
+        st.divider()
+        
+        # Generate Draft button
+        if st.button("🚀 Generate Draft", type="primary", use_container_width=True):
+            with st.spinner("Atlas is recalling knowledge and writing the draft..."):
+                result = client.generate_draft(
+                    adviser_id=adviser_id,
+                    client_id=client_id_input,
+                    topic=topic_input,
+                    template_id=template_id,
+                )
+                if result:
+                    # Save version state
+                    if "version_id" in result:
+                        st.session_state[f"active_version_{template_id}"] = result["version_id"]
+                    
+                    # Update variables and result state
+                    extracted = result.get("extracted_variables", {})
+                    st.session_state.dt_ai_variables = extracted
+                    st.session_state.dt_user_variables = extracted.copy()
+                    
+                    st.session_state.dt_report_text = result.get("generated_text", "")
+                    st.session_state.dt_generation_result = result
+                    st.session_state.dt_draft_generated = True
+                    st.success("Draft generated successfully!")
+                    st.rerun()
+
+    st.divider()
+
+    if not st.session_state.dt_draft_generated:
+        st.info("👆 Review the document above and click **Generate Draft** to continue.")
+        return
+
+    col_left, col_right = st.columns([6, 4])
+
+    with col_left:
+        st.markdown("### 📄 The Report")
+        st.markdown(
+            f'<div style="background:#1e1e2e; padding:20px; border-radius:10px; '
+            f'border:1px solid #444; font-size:14px; line-height:1.7; '
+            f'white-space:pre-wrap; color:#e0e0e0; margin-bottom:20px;">'
+            f'{st.session_state.dt_report_text}'
+            f'</div>',
+            unsafe_allow_html=True,
+        )
+        
+    with col_right:
+        st.markdown("### 🔍 Data & Feedback Inspector")
+        st.caption("Review extracted variables and provide stylistic feedback")
+        
+        # Stylistic Feedback
+        st.markdown("#### 🗣️ Stylistic Instructions")
+        feedback = st.text_input("Adjust the style/tone of this draft...", value=st.session_state.dt_stylistic_feedback, key="dt_style_input")
+        if feedback != st.session_state.dt_stylistic_feedback:
+            st.session_state.dt_stylistic_feedback = feedback
+        
+        st.divider()
+        
+        # Procedural Variables
+        st.markdown("#### ⚙️ Extracted Variables")
+        procedural_corrections = []
+        
+        if not st.session_state.dt_ai_variables:
+            st.info("No variables extracted.")
+        
+        for key, ai_val in st.session_state.dt_ai_variables.items():
+            # Convert values to strings for the text input
+            ai_val_str = str(ai_val) if ai_val is not None else ""
+            current_user_val = str(st.session_state.dt_user_variables.get(key, ""))
+            
+            user_val = st.text_input(
+                key, 
+                value=current_user_val, 
+                key=f"inspector_{key}"
+            )
+            if user_val != current_user_val:
+                st.session_state.dt_user_variables[key] = user_val
+            
+            if st.session_state.dt_user_variables[key] != ai_val_str:
+                procedural_corrections.append({
+                    "variable_name": key, 
+                    "correction_rule": f"Change {ai_val_str} to {st.session_state.dt_user_variables[key]}"
+                })
+                st.warning(f"Modified: {ai_val_str} ➡️ {st.session_state.dt_user_variables[key]}")
+        
+        st.divider()
+        
+        if st.button("🧠 Approve & Learn", type="primary", use_container_width=True):
+            payload_data = {
+                "adviser_id": adviser_id,
+                "client_id": client_id_input,
+                "topic": topic_input,
+                "stylistic_feedback": st.session_state.dt_stylistic_feedback,
+                "procedural_corrections": procedural_corrections
+            }
+            
+            try:
+                # Use the feedback capture endpoint
+                url = f"{client.base_url}/feedback/capture"
+                with st.spinner("Updating Atlas Memory..."):
+                    response = httpx.post(
+                        url,
+                        json=payload_data,
+                        timeout=10.0,
+                        headers=client.headers
+                    )
+                    response.raise_for_status()
+                st.success("Atlas has updated its memory.")
+                st.toast("Atlas has updated its memory.")
+            except Exception as e:
+                import logging
+                logging.getLogger(__name__).error(f"Feedback capture error: {e}")
+                st.error(f"Engine offline. Could not connect to Atlas: {e}")
+
 def render_template_engine(client: TemplateAPIClient) -> None:
     """Render the complete template engine workflow."""
     init_template_session_state()
@@ -1954,22 +1981,19 @@ def render_template_engine(client: TemplateAPIClient) -> None:
     # Mode selection
     mode = st.radio(
         "Select Mode",
-        ["📤 Batch Upload", "💉 Variable Injection", "📊 Status Dashboard", "📥 Download Center", "⚙️ Prompt Settings"],
+        ["📤 Batch Upload", "📊 Status Dashboard", "🧠 Review & Learn", "⚙️ Prompt Settings"],
         horizontal=True,
     )
 
     if mode == "📤 Batch Upload":
         render_template_upload(client)
 
-    elif mode == "💉 Variable Injection":
-        # This will be Phase 3 implementation
-        render_stored_template_selector(client)
-
     elif mode == "📊 Status Dashboard":
         render_injection_queue_dashboard(client)
 
-    elif mode == "📥 Download Center":
-        render_download_center(client)
+    elif mode == "🧠 Review & Learn":
+        # from report_ui import render_director_typist
+        render_director_typist_ui(client)
 
     elif mode == "⚙️ Prompt Settings":
         render_prompt_settings(client)

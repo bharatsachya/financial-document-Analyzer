@@ -34,13 +34,47 @@ class Settings(BaseSettings):
     )
 
     # Vector Store
+    pinecone_api_key: str = Field(
+        default="",
+        description="Pinecone API key for vector storage.",
+    )
+    pinecone_index_url: str = Field(
+        default="",
+        description="Pinecone index URL.",
+    )
+    pinecone_namespace: str = Field(
+        default="report-preferences",
+        description="Pinecone namespace for preferences.",
+    )
     qdrant_url: str = Field(
         default="http://localhost:6333",
-        description="Qdrant server URL.",
+        description="Qdrant server URL for style preference memory.",
     )
     qdrant_api_key: str | None = Field(
         default=None,
         description="Optional Qdrant API key for authentication.",
+    )
+    qdrant_style_collection: str = Field(
+        default="org_style_preferences",
+        description="Qdrant collection name for learned style preferences.",
+    )
+
+    # Graph Database (Neo4j) - Factual Data
+    neo4j_uri: str = Field(
+        default="bolt://localhost:7687",
+        description="Neo4j Bolt connection URI.",
+    )
+    neo4j_user: str = Field(
+        default="neo4j",
+        description="Neo4j username.",
+    )
+    neo4j_password: str = Field(
+        default="neo4jpassword",
+        description="Neo4j password.",
+    )
+    neo4j_database: str = Field(
+        default="neo4j",
+        description="Neo4j database name.",
     )
 
     # Redis / Celery

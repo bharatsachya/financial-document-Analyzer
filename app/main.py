@@ -90,8 +90,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
         # Include routers
         try:
+            from app.api.feedback import router as feedback_router
             app.include_router(templates_router)
-            logger.info("Registered templates router")
+            app.include_router(feedback_router, prefix="/api")
+            logger.info("Registered API routers")
         except Exception as e:
             logger.error(f"Failed to include router: {e}", exc_info=True)
             raise

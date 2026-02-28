@@ -4,6 +4,12 @@ Defines the core data models for the Template Intelligence Engine:
 - Organization: Multi-tenancy root
 - TemplateStorage: Template metadata and processing status
 - AnalysisPrompt: Custom prompts for template analysis
+
+Multi-Tier Memory Architecture:
+- Semantic Memory: Mem0 library (tone/style preferences) -> see app.core.memory
+- Procedural Memory: PostgreSQL (logic/audits/corrections)
+- Episodic Memory: PostgreSQL (events/audit trail)
+- Factual Data: Neo4j (client fact find) -> see app.db.graph
 """
 
 import datetime
@@ -204,6 +210,9 @@ class TemplateListResponse(SQLModel):
 
     templates: list[TemplateRead]
     total: int
+
+
+
 
 
 # =============================================================================

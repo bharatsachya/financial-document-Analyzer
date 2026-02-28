@@ -140,6 +140,7 @@ async def create_all_tables(settings: Settings | None = None) -> None:
     try:
         # Import models to ensure they're registered with SQLModel metadata
         from app.db import models  # noqa: F401
+        from app.db.database import DraftVersion # Ensure it's registered
 
         engine = get_engine(settings)
 
