@@ -18,7 +18,7 @@ import streamlit.components.v1 as components
 from streamlit.runtime.uploaded_file_manager import UploadedFile
 
 # Custom components
-d3_carousel_component = components.declare_component("d3_carousel", path="frontend/carousel_component")
+d3_carousel_component = components.declare_component("d3_carousel", path="carousel_component")
 
 # Configuration
 API_BASE_URL = os.getenv("API_BASE_URL", "http://localhost:8000")
