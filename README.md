@@ -6,48 +6,45 @@ A high-performance, event-driven template analysis and injection system designed
 
 This system follows a **Prompt-Based, Agentic Document Generation Architecture** powered by a **Multi-Tier Memory Architecture**. It converts static Word documents into dynamic templates through intelligent variable detection and generates highly personalized, FCA-compliant financial reports.
 
-## Memory Overview
+# Memory Overview
 
-======================================================================================
-THE AGENTIC COGNITIVE ARCHITECTURE (MEMORY MAP)
-======================================================================================
+```mermaid
+flowchart TB
+    UI["💻 Streamlit Dashboard<br>(Director-Typist Flow)"]
 
-                           ┌─────────────────────────┐
-                           │   STREAMLIT DASHBOARD   │
-                           │ (Director-Typist Flow)  │
-                           └──────┬───────────▲──────┘
-                                  │           │
-             [ 2. Dual-Layer Feedback ]       [ 1. Generate Report ]
-                                  │           │
-                           ┌──────▼───────────┴──────┐
-                           │     API GATEWAY &       │
-                           │    CELERY ORCHESTRATOR  │
-                           └─┬──┬──────────────┬──┬──┘
-                             │  │              │  │
-         ┌───────────────────┘  │              │  └───────────────────┐
-         │                      │              │                      │
+    subgraph Orchestrator ["API Gateway & Celery Orchestrator"]
+        GEN["📥 1. Generate Report"]
+        FEED["📤 2. Dual-Layer Feedback"]
+    end
 
-=========▼========= =========▼========= =========▼========= =========▼=========
-🕸️ FACTUAL MEMORY ⚙️ PROCEDURAL MEMORY 🧠 SEMANTIC MEMORY 🎞️ EPISODIC MEMORY
-=================== =================== =================== ===================
-Datastore: Neo4j Datastore: Postgres Datastore: Qdrant Datastore: Postgres
-Format: Graph Nodes Format: Relational Format: Vector DB Format: JSONB Ledger
+    UI --> GEN
+    UI --> FEED
 
-Content: Content: Content: Content:
-Hard Client Facts Data Mapping Logic Tone & Style Rules Immutable Audits
-(Age, Income, Goals) (e.g., Tax = 20%) (e.g., "Be formal") & Event History
+    subgraph Memories ["The Agentic Cognitive Architecture (Memory Map)"]
+        direction LR
+        FM[("🕸️ Factual Memory<br>Datastore: Neo4j<br>Format: Graph Nodes<br>Content: Hard Client Facts")]
+        PM[("⚙️ Procedural Memory<br>Datastore: Postgres<br>Format: Relational<br>Content: Data Mapping Logic")]
+        SM[("🧠 Semantic Memory<br>Datastore: Qdrant<br>Format: Vector DB<br>Content: Tone & Style Rules")]
+        EM[("🎞️ Episodic Memory<br>Datastore: Postgres<br>Format: JSONB Ledger<br>Content: Immutable Audits")]
+    end
 
-Retrieval: Retrieval: Retrieval: Retrieval:
-Cypher Traversal Strict SQL Match Top-K Semantic Search Chronological Query
-=================== =================== =================== ===================
-│ │ │ │
-│ (Inject Facts) │ (Inject) │ (Inject Tone) │ (Log Event)
-└───────────────────┐ │ │ ┌───────────────────┘
-▼ ▼ ▼ ▼
-┌─────────────────────────┐
-│ PROMPT ASSEMBLER & │
-│ LLM (gpt-4o-mini) │
-└─────────────────────────┘
+    GEN -->|Extract Facts| FM
+    GEN -->|Retrieve Rules| PM
+    GEN -->|Retrieve Tone| SM
+
+    FEED -->|Learn Correct Logic| PM
+    FEED -->|Learn Style| SM
+    FEED -->|Audit Log| EM
+    GEN -->|Audit Log| EM
+
+    LLM["🧠 Prompt Assembler & LLM<br>(gpt-4o-mini)"]
+
+    FM --> LLM
+    PM --> LLM
+    SM --> LLM
+
+    LLM --> UI
+```
 
 ### 🧠 The Multi-Tier "Agentic" Memory System
 
